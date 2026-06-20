@@ -5,7 +5,7 @@ version: "0.1.0"
 desc: "AstrBot WebUI 美化插件，支持运行时背景图、透明界面和可读性增强。"
 short_desc: "WebUI 背景与透明化美化"
 repo: "https://github.com/Sisyphbaous-DT-Project/astrbot_plugin_palette"
-astrbot_version: ">=4.25.5,<5"
+astrbot_version: ">=4.26.0-beta1,<5"
 pages:
   - name: settings
     title: 设置
