@@ -1,0 +1,208 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>AstrBot调色盘</title>
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <main class="page-shell">
+      <section class="topbar">
+        <div>
+          <h1>AstrBot调色盘</h1>
+          <p id="status-text">正在读取当前设置</p>
+          <p class="theme-hint">推荐搭配 AstrBot 深色模式食用，透明背景下文字会更稳。</p>
+        </div>
+        <div class="topbar-actions">
+          <button id="refresh" class="ghost-button" type="button">刷新</button>
+          <button id="save" type="button">保存</button>
+        </div>
+      </section>
+
+      <section class="workspace">
+        <form id="settings-form" class="settings-panel">
+          <section class="panel-block">
+            <div class="section-title">
+              <h2>背景图片</h2>
+              <label class="switch">
+                <input id="enabled" name="enabled" type="checkbox" />
+                <span>启用</span>
+              </label>
+            </div>
+
+            <label class="upload-box" for="background-file">
+              <input
+                id="background-file"
+                accept="image/jpeg,image/png,image/webp,image/gif"
+                type="file"
+              />
+              <span>选择图片</span>
+              <small>支持 jpg、png、webp、gif，最大 10MB</small>
+            </label>
+
+            <div class="current-file">
+              <span>当前图片</span>
+              <strong id="background-name">未设置</strong>
+            </div>
+          </section>
+
+          <section class="control-grid panel-block">
+            <label>
+              <span>填充方式</span>
+              <select id="background-fit" name="background_fit">
+                <option value="cover">铺满</option>
+                <option value="contain">完整显示</option>
+                <option value="auto">原始尺寸</option>
+              </select>
+            </label>
+
+            <label>
+              <span>背景位置</span>
+              <select id="background-position" name="background_position">
+                <option value="center center">居中</option>
+                <option value="top center">靠上</option>
+                <option value="bottom center">靠下</option>
+                <option value="left center">靠左</option>
+                <option value="right center">靠右</option>
+              </select>
+            </label>
+
+            <label>
+              <span>模糊强度 <output id="blur-value">0px</output></span>
+              <input
+                id="background-blur"
+                max="40"
+                min="0"
+                name="background_blur"
+                step="1"
+                type="range"
+              />
+            </label>
+
+            <label>
+              <span>遮罩强度 <output id="dim-value">50%</output></span>
+              <input
+                id="background-dim"
+                max="0.95"
+                min="0"
+                name="background_dim"
+                step="0.01"
+                type="range"
+              />
+            </label>
+
+            <label>
+              <span>界面底色 <output id="surface-value">0%</output></span>
+              <input
+                id="surface-opacity"
+                max="1"
+                min="0"
+                name="surface_opacity"
+                step="0.01"
+                type="range"
+              />
+            </label>
+          </section>
+
+          <section class="control-grid panel-block">
+            <label>
+              <span>文字增强</span>
+              <select id="text-enhancement-mode" name="text_enhancement_mode">
+                <option value="off">关闭</option>
+                <option value="soft_shadow">柔和阴影</option>
+                <option value="stroke">强力描边</option>
+              </select>
+            </label>
+
+            <label>
+              <span>增强强度 <output id="text-strength-value">100%</output></span>
+              <input
+                id="text-enhancement-strength"
+                max="1"
+                min="0"
+                name="text_enhancement_strength"
+                step="0.01"
+                type="range"
+              />
+            </label>
+
+            <label>
+              <span>背景灰度 <output id="grayscale-value">0%</output></span>
+              <input
+                id="background-grayscale"
+                max="1"
+                min="0"
+                name="background_grayscale"
+                step="0.01"
+                type="range"
+              />
+            </label>
+
+            <label>
+              <span>背景亮度 <output id="brightness-value">100%</output></span>
+              <input
+                id="background-brightness"
+                max="1.5"
+                min="0.5"
+                name="background_brightness"
+                step="0.01"
+                type="range"
+              />
+            </label>
+
+            <label>
+              <span>背景对比度 <output id="contrast-value">100%</output></span>
+              <input
+                id="background-contrast"
+                max="1.5"
+                min="0.5"
+                name="background_contrast"
+                step="0.01"
+                type="range"
+              />
+            </label>
+
+            <label>
+              <span>背景饱和度 <output id="saturation-value">100%</output></span>
+              <input
+                id="background-saturation"
+                max="2"
+                min="0"
+                name="background_saturation"
+                step="0.01"
+                type="range"
+              />
+            </label>
+          </section>
+
+          <section class="panel-block">
+            <label class="css-editor-label" for="advanced-css">
+              <span>
+                高级 CSS
+                <small>危险项：外链资源会被拦截</small>
+              </span>
+              <textarea
+                id="advanced-css"
+                name="advanced_css"
+                spellcheck="false"
+              ></textarea>
+            </label>
+          </section>
+        </form>
+
+        <aside class="preview-panel">
+          <div id="preview" class="preview-stage">
+            <div class="preview-overlay"></div>
+            <div class="preview-empty">上传背景后，这里会显示当前使用的壁纸。</div>
+          </div>
+          <dl id="status-list" class="info-list">
+            <div><dt>状态</dt><dd>加载中</dd></div>
+          </dl>
+        </aside>
+      </section>
+    </main>
+
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>

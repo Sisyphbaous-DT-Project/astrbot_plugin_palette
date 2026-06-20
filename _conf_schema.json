@@ -1,0 +1,90 @@
+{
+  "enabled": {
+    "description": "启用 WebUI 美化",
+    "type": "bool",
+    "default": true,
+    "hint": "默认启用；首次使用建议搭配 AstrBot 深色模式。"
+  },
+  "background_image": {
+    "description": "背景图片路径",
+    "type": "string",
+    "default": "",
+    "hint": "通过插件设置页上传后自动填入。"
+  },
+  "background_fit": {
+    "description": "背景填充方式",
+    "type": "string",
+    "default": "cover",
+    "options": ["cover", "contain", "auto"],
+    "hint": "控制背景图片如何填充 WebUI 可视区域。"
+  },
+  "background_position": {
+    "description": "背景位置",
+    "type": "string",
+    "default": "center center",
+    "hint": "例如 center center、top center、left top。"
+  },
+  "background_blur": {
+    "description": "背景模糊强度",
+    "type": "int",
+    "default": 0,
+    "hint": "单位为 px；0 表示不模糊背景。"
+  },
+  "background_dim": {
+    "description": "背景遮罩强度",
+    "type": "float",
+    "default": 0.5,
+    "hint": "取值 0 到 0.95，数值越高背景越暗。"
+  },
+  "surface_opacity": {
+    "description": "界面底色强度",
+    "type": "float",
+    "default": 0.0,
+    "hint": "取值 0 到 1；0 表示常驻面板透明，1 表示接近原主题底色。"
+  },
+  "text_enhancement_mode": {
+    "description": "文字增强模式",
+    "type": "string",
+    "default": "soft_shadow",
+    "options": ["off", "soft_shadow", "stroke"],
+    "hint": "soft_shadow 为柔和阴影，stroke 为强力描边。"
+  },
+  "text_enhancement_strength": {
+    "description": "文字增强强度",
+    "type": "float",
+    "default": 1.0,
+    "hint": "取值 0 到 1；数值越高文字和图标的阴影或描边越明显。"
+  },
+  "background_grayscale": {
+    "description": "背景灰度",
+    "type": "float",
+    "default": 0.0,
+    "hint": "取值 0 到 1；只影响背景图层。"
+  },
+  "background_brightness": {
+    "description": "背景亮度",
+    "type": "float",
+    "default": 1.0,
+    "hint": "取值 0.5 到 1.5；1 表示保持原亮度。"
+  },
+  "background_contrast": {
+    "description": "背景对比度",
+    "type": "float",
+    "default": 1.0,
+    "hint": "取值 0.5 到 1.5；1 表示保持原对比度。"
+  },
+  "background_saturation": {
+    "description": "背景饱和度",
+    "type": "float",
+    "default": 1.0,
+    "hint": "取值 0 到 2；1 表示保持原饱和度。"
+  },
+  "advanced_css": {
+    "description": "高级自定义 CSS",
+    "type": "text",
+    "default": "",
+    "editor_mode": true,
+    "editor_language": "css",
+    "hint": "会追加到调色盘生成的主题 CSS 中；外链资源会被拦截。"
+  }
+}
