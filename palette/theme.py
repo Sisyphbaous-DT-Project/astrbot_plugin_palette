@@ -145,6 +145,8 @@ def build_theme_css(config: dict[str, Any]) -> str:
             "",
             _config_dialog_surface_css(),
             "",
+            _extension_dialog_surface_css(),
+            "",
             _readability_css(text_effect, icon_effect),
             "",
             sanitize_advanced_css(config.get("advanced_css")),
@@ -738,6 +740,90 @@ def _config_dialog_surface_css() -> str:
             "html.astrbot-palette-active .v-overlay-container .v-dialog .v-card:has(.config-section) [style*=\"background:rgb(var(--v-theme-surface))\"] {",
             f"  background: {surface} !important;",
             "  box-shadow: none !important;",
+            "}",
+        ]
+    )
+
+
+def _extension_dialog_surface_css() -> str:
+    surface = "rgba(var(--v-theme-surface), var(--astrbot-palette-surface-opacity, 0))"
+    neutral_soft = (
+        "rgba(var(--v-theme-on-surface), "
+        "calc(var(--astrbot-palette-surface-opacity, 0) * 0.08))"
+    )
+    border = (
+        "rgba(var(--v-theme-on-surface), "
+        "calc(var(--astrbot-palette-surface-opacity, 0) * 0.18))"
+    )
+    return "\n".join(
+        [
+            "html.astrbot-palette-active .v-overlay-container .v-dialog .v-card:has(> .v-card-title.text-h2.pa-4.pl-6.pb-0),",
+            "html.astrbot-palette-active .v-overlay-container .v-dialog .v-card:has([style*=\"max-height: 60vh\"]),",
+            "html.astrbot-palette-active .v-overlay-container .v-dialog .v-card:has(> .v-card-title.text-h3.pa-4.pb-0.pl-6),",
+            "html.astrbot-palette-active .v-overlay-container .v-dialog .v-card:has(.market-install-confirm),",
+            "html.astrbot-palette-active .v-overlay-container .v-dialog .v-card:has(.v-card-title .text-h2.pa-2) {",
+            f"  background: {surface} !important;",
+            "  box-shadow: none !important;",
+            "  backdrop-filter: none !important;",
+            f"  border-color: {border} !important;",
+            "}",
+            "",
+            "html.astrbot-palette-active .v-overlay-container .v-dialog .v-card:has(> .v-card-title.text-h2.pa-4.pl-6.pb-0) > .v-card-title,",
+            "html.astrbot-palette-active .v-overlay-container .v-dialog .v-card:has(> .v-card-title.text-h2.pa-4.pl-6.pb-0) > .v-card-text,",
+            "html.astrbot-palette-active .v-overlay-container .v-dialog .v-card:has(> .v-card-title.text-h2.pa-4.pl-6.pb-0) > .v-card-actions,",
+            "html.astrbot-palette-active .v-overlay-container .v-dialog .v-card:has([style*=\"max-height: 60vh\"]) [style*=\"max-height: 60vh\"],",
+            "html.astrbot-palette-active .v-overlay-container .v-dialog .v-card:has(> .v-card-title.text-h3.pa-4.pb-0.pl-6) > .v-card-title,",
+            "html.astrbot-palette-active .v-overlay-container .v-dialog .v-card:has(> .v-card-title.text-h3.pa-4.pb-0.pl-6) > .v-card-text,",
+            "html.astrbot-palette-active .v-overlay-container .v-dialog .v-card:has(> .v-card-title.text-h3.pa-4.pb-0.pl-6) > .v-card-actions,",
+            "html.astrbot-palette-active .v-overlay-container .v-dialog .v-card:has(.market-install-confirm) > .v-card-title,",
+            "html.astrbot-palette-active .v-overlay-container .v-dialog .v-card:has(.market-install-confirm) > .v-card-text,",
+            "html.astrbot-palette-active .v-overlay-container .v-dialog .v-card:has(.market-install-confirm) > .v-card-actions,",
+            "html.astrbot-palette-active .v-overlay-container .v-dialog .v-card:has(.market-install-confirm) .v-tabs,",
+            "html.astrbot-palette-active .v-overlay-container .v-dialog .v-card:has(.market-install-confirm) .v-window,",
+            "html.astrbot-palette-active .v-overlay-container .v-dialog .v-card:has(.market-install-confirm) .v-window-item,",
+            "html.astrbot-palette-active .v-overlay-container .v-dialog .v-card:has(.v-card-title .text-h2.pa-2) > .v-card-title,",
+            "html.astrbot-palette-active .v-overlay-container .v-dialog .v-card:has(.v-card-title .text-h2.pa-2) > .v-card-text,",
+            "html.astrbot-palette-active .v-overlay-container .v-dialog .v-card:has(.v-card-title .text-h2.pa-2) > .v-card-actions {",
+            f"  background: {surface} !important;",
+            "  box-shadow: none !important;",
+            "  backdrop-filter: none !important;",
+            f"  border-color: {border} !important;",
+            "}",
+            "",
+            "html.astrbot-palette-active .v-overlay-container .v-dialog .v-card:has(.market-install-confirm) .market-install-confirm,",
+            "html.astrbot-palette-active .v-overlay-container .v-dialog .v-card:has(.market-install-confirm) .market-install-source,",
+            "html.astrbot-palette-active .v-overlay-container .v-dialog .v-card:has(.v-card-title .text-h2.pa-2) .markdown-body .table-container,",
+            "html.astrbot-palette-active .v-overlay-container .v-dialog .v-card:has(.v-card-title .text-h2.pa-2) .markdown-body .copy-code-btn,",
+            "html.astrbot-palette-active .v-overlay-container .v-dialog .v-card:has(.v-card-title .text-h2.pa-2) .markdown-body details,",
+            "html.astrbot-palette-active .v-overlay-container .v-dialog .v-card:has(.v-card-title .text-h2.pa-2) .markdown-body code,",
+            "html.astrbot-palette-active .v-overlay-container .v-dialog .v-card:has(.v-card-title .text-h2.pa-2) .markdown-body pre.shiki,",
+            "html.astrbot-palette-active .v-overlay-container .v-dialog .v-card:has(.v-card-title .text-h2.pa-2) .markdown-body table th,",
+            "html.astrbot-palette-active .v-overlay-container .v-dialog .v-card:has(.v-card-title .text-h2.pa-2) .markdown-body table tr:nth-child(2n) {",
+            f"  background: {neutral_soft} !important;",
+            "  box-shadow: none !important;",
+            "}",
+            "",
+            "html.astrbot-palette-active .v-overlay-container .v-dialog .v-card:has(.v-card-title .text-h2.pa-2) .markdown-body img,",
+            "html.astrbot-palette-active .v-overlay-container .v-dialog .v-card:has(.v-card-title .text-h2.pa-2) .markdown-body pre.shiki code {",
+            "  background: transparent !important;",
+            "}",
+            "",
+            "html.astrbot-palette-active .v-overlay-container .v-dialog .v-card:has(.v-card-title .text-h2.pa-2) .markdown-body,",
+            "html.astrbot-palette-active .v-overlay-container .v-dialog .v-card:has(.v-card-title .text-h2.pa-2) .markdown-body .table-container,",
+            "html.astrbot-palette-active .v-overlay-container .v-dialog .v-card:has(.v-card-title .text-h2.pa-2) .markdown-body table,",
+            "html.astrbot-palette-active .v-overlay-container .v-dialog .v-card:has(.v-card-title .text-h2.pa-2) .markdown-body table th,",
+            "html.astrbot-palette-active .v-overlay-container .v-dialog .v-card:has(.v-card-title .text-h2.pa-2) .markdown-body table td,",
+            "html.astrbot-palette-active .v-overlay-container .v-dialog .v-card:has(.v-card-title .text-h2.pa-2) .markdown-body details,",
+            "html.astrbot-palette-active .v-overlay-container .v-dialog .v-card:has(.v-card-title .text-h2.pa-2) .markdown-body blockquote,",
+            "html.astrbot-palette-active .v-overlay-container .v-dialog .v-card:has(.v-card-title .text-h2.pa-2) .markdown-body pre.shiki {",
+            f"  border-color: {border} !important;",
+            "  --markdown-border: "
+            "rgba(var(--v-theme-on-surface), "
+            "calc(var(--astrbot-palette-surface-opacity, 0) * 0.18)) !important;",
+            "}",
+            "",
+            "html.astrbot-palette-active .v-overlay-container .v-dialog .v-card:has(.v-card-title .text-h2.pa-2) .markdown-body hr {",
+            f"  background: {border} !important;",
             "}",
         ]
     )
