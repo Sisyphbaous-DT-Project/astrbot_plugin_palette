@@ -35,6 +35,7 @@
               <input
                 id="background-file"
                 accept="image/jpeg,image/png,image/webp,image/gif"
+                multiple
                 type="file"
               />
               <span>选择图片</span>
@@ -45,6 +46,17 @@
               <span>当前图片</span>
               <strong id="background-name">未设置</strong>
             </div>
+
+            <div class="gallery-toolbar">
+              <span>背景图库</span>
+              <label class="switch">
+                <input id="random-background-on-load" name="random_background_on_load" type="checkbox" />
+                <span>打开或刷新时随机</span>
+              </label>
+            </div>
+            <div id="background-gallery" class="background-gallery" aria-live="polite">
+              <p class="gallery-empty">图库里还没有图片。</p>
+            </div>
           </section>
 
           <section class="control-grid panel-block">
@@ -53,6 +65,7 @@
               <select id="background-fit" name="background_fit">
                 <option value="cover">铺满</option>
                 <option value="contain">完整显示</option>
+                <option value="stretch">拉伸铺满</option>
                 <option value="auto">原始尺寸</option>
               </select>
             </label>

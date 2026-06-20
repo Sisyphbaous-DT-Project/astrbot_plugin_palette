@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import random
 from contextlib import suppress
 from pathlib import Path
 from typing import Any, Mapping, MutableMapping
@@ -40,7 +41,7 @@ class PalettePlugin(Star):
         self.config: Mapping[str, Any] = config if config is not None else {}
         self.paths = PalettePaths()
         self.injection_status = ensure_dashboard_injection(self.paths)
-        self._ensure_theme_colors_for_existing_background()
+        self._ensure_config_for_existing_background()
 
         context.register_web_api(
             f"{ROUTE_PREFIX}/status",
@@ -83,6 +84,24 @@ class PalettePlugin(Star):
             self.upload_background,
             ["POST"],
             "上传 AstrBot 调色盘背景图片",
+        )
+        context.register_web_api(
+            f"{ROUTE_PREFIX}/backgrounds/select",
+            self.select_background,
+            ["POST"],
+            "切换 AstrBot 调色盘当前背景图片",
+        )
+        context.register_web_api(
+            f"{ROUTE_PREFIX}/backgrounds/delete",
+            self.delete_background,
+            ["POST"],
+            "删除 AstrBot 调色盘背景图片",
+        )
+        context.register_web_api(
+            f"{ROUTE_PREFIX}/backgrounds/random-select",
+            self.random_select_background,
+            ["POST"],
+            "随机切换 AstrBot 调色盘背景图片",
         )
         context.register_web_api(
             f"{ROUTE_PREFIX}/backgrounds/<filename>",
@@ -135,27 +154,141 @@ class PalettePlugin(Star):
         if upload_file is None:
             return error_response("请选择要上传的背景图片。")
 
-        previous_background = self._config_str("background_image", "")
         try:
             saved_filename = await self._save_background_upload(upload_file)
-            config = self._normalize_config(
-                {
-                    **self._public_config(),
-                    "background_image": saved_filename,
-                }
+            config = self._normalize_config(self._public_config())
+            background_images = self._append_background_image(
+                config["background_images"],
+                saved_filename,
             )
-            config = self._with_theme_colors(config, force=True)
+            config = {
+                **config,
+                "background_images": background_images,
+            }
             self.injection_status = ensure_dashboard_injection(self.paths)
             self._save_config(config)
-            self._cleanup_replaced_background(previous_background, saved_filename)
         except ValueError as exc:
             return error_response(str(exc))
 
         return json_response(
             {
-                "message": "背景图片已上传。",
+                "message": "背景图片已加入图库。",
                 "background_image": saved_filename,
                 "background_url": self._background_url(saved_filename),
+                "config": self._public_config(),
+            }
+        )
+
+    async def select_background(self):
+        payload = await request.json(default={})
+        if not isinstance(payload, dict):
+            return error_response("背景图片参数不正确。")
+
+        filename = str(payload.get("background_image") or "").strip()
+        if not filename:
+            return error_response("请选择要切换的背景图片。")
+
+        try:
+            config = self._normalize_config(
+                {
+                    **self._public_config(),
+                    "background_image": filename,
+                }
+            )
+            config = self._with_theme_colors(config, force=True)
+            self._save_config(config)
+        except ValueError as exc:
+            return error_response(str(exc))
+
+        return json_response(
+            {
+                "message": "背景图片已切换。",
+                "config": self._public_config(),
+            }
+        )
+
+    async def delete_background(self):
+        payload = await request.json(default={})
+        if not isinstance(payload, dict):
+            return error_response("背景图片参数不正确。")
+
+        filename = str(payload.get("background_image") or "").strip()
+        if not filename:
+            return error_response("请选择要删除的背景图片。")
+
+        try:
+            config = self._normalize_config(self._public_config())
+            if filename not in config["background_images"]:
+                raise ValueError("背景图片不在图库中。")
+
+            target_path = self._resolve_background(filename)
+            with suppress(FileNotFoundError):
+                target_path.unlink()
+
+            background_images = [
+                item for item in config["background_images"] if item != filename
+            ]
+            current_background = config["background_image"]
+            next_background = current_background
+            should_refresh_colors = False
+            if current_background == filename:
+                next_background = background_images[0] if background_images else ""
+                should_refresh_colors = True
+
+            config = {
+                **config,
+                "background_image": next_background,
+                "background_images": background_images,
+            }
+            if should_refresh_colors:
+                config = self._with_theme_colors(config, force=True)
+            self._save_config(config)
+        except ValueError as exc:
+            return error_response(str(exc))
+
+        return json_response(
+            {
+                "message": "背景图片已删除。",
+                "config": self._public_config(),
+            }
+        )
+
+    async def random_select_background(self):
+        try:
+            config = self._normalize_config(self._public_config())
+            background_images = config["background_images"]
+            if not background_images:
+                raise ValueError("图库中还没有可随机的背景图片。")
+
+            current_background = config["background_image"]
+            if len(background_images) == 1 and current_background == background_images[0]:
+                return json_response(
+                    {
+                        "message": "图库中只有当前背景，无需随机切换。",
+                        "config": self._public_config(),
+                    }
+                )
+
+            candidates = [
+                filename
+                for filename in background_images
+                if filename != current_background
+            ]
+            if not candidates:
+                candidates = background_images
+            selected = random.choice(candidates)
+            config = {
+                **config,
+                "background_image": selected,
+            }
+            config = self._with_theme_colors(config, force=True)
+            self._save_config(config)
+        except ValueError as exc:
+            return error_response(str(exc))
+
+        return json_response(
+            {
+                "message": "背景图片已随机切换。",
                 "config": self._public_config(),
             }
         )
@@ -178,7 +311,9 @@ class PalettePlugin(Star):
         )
 
     async def get_background_preview(self):
-        filename = self._config_str("background_image", "")
+        filename = str(
+            request.query.get("filename") or self._config_str("background_image", "")
+        ).strip()
         if not filename:
             return json_response(
                 {
@@ -229,9 +364,19 @@ class PalettePlugin(Star):
         )
 
     def _public_config(self) -> dict[str, Any]:
+        background_image = self._config_str("background_image", "").strip()
+        background_images = self._public_background_images(background_image)
+        if background_image and background_image not in background_images:
+            background_image = ""
+
         return {
             "enabled": self._config_bool("enabled", True),
-            "background_image": self._config_str("background_image", ""),
+            "background_image": background_image,
+            "background_images": background_images,
+            "background_items": [
+                self._background_item(filename, filename == background_image)
+                for filename in background_images
+            ],
             "background_fit": self._config_str("background_fit", "cover"),
             "background_position": self._config_str(
                 "background_position",
@@ -258,6 +403,10 @@ class PalettePlugin(Star):
                 "background_saturation",
                 1.0,
             ),
+            "random_background_on_load": self._config_bool(
+                "random_background_on_load",
+                False,
+            ),
             "auto_theme_enabled": self._config_bool("auto_theme_enabled", True),
             "theme_primary": normalize_hex_color(
                 self._config_str("theme_primary", "")
@@ -266,9 +415,7 @@ class PalettePlugin(Star):
                 self._config_str("theme_secondary", "")
             ),
             "advanced_css": self._config_str("advanced_css", ""),
-            "background_url": self._background_url(
-                self._config_str("background_image", ""),
-            ),
+            "background_url": self._background_url(background_image),
         }
 
     def _config_bool(self, key: str, default: bool) -> bool:
@@ -295,16 +442,23 @@ class PalettePlugin(Star):
 
     def _normalize_config(self, payload: Mapping[str, Any]) -> dict[str, Any]:
         current = self._public_config()
+        background_images = self._normalize_background_images(
+            payload.get("background_images", current["background_images"])
+        )
         background_image = str(
             payload.get("background_image", current["background_image"]) or ""
         ).strip()
         if background_image:
             self._resolve_background(background_image, must_exist=True)
+            background_images = self._append_background_image(
+                background_images,
+                background_image,
+            )
 
         background_fit = str(
             payload.get("background_fit", current["background_fit"]) or "cover"
         ).strip()
-        if background_fit not in {"cover", "contain", "auto"}:
+        if background_fit not in {"cover", "contain", "auto", "stretch"}:
             raise ValueError("背景填充方式不正确。")
 
         background_position = str(
@@ -337,6 +491,7 @@ class PalettePlugin(Star):
                 current["enabled"],
             ),
             "background_image": background_image,
+            "background_images": background_images,
             "background_fit": background_fit,
             "background_position": background_position,
             "background_blur": self._clamp_int(
@@ -389,6 +544,13 @@ class PalettePlugin(Star):
                 0.0,
                 2.0,
             ),
+            "random_background_on_load": self._normalize_bool(
+                payload.get(
+                    "random_background_on_load",
+                    current["random_background_on_load"],
+                ),
+                current["random_background_on_load"],
+            ),
             "auto_theme_enabled": self._normalize_bool(
                 payload.get("auto_theme_enabled", current["auto_theme_enabled"]),
                 current["auto_theme_enabled"],
@@ -400,11 +562,13 @@ class PalettePlugin(Star):
             ),
         }
 
-    def _ensure_theme_colors_for_existing_background(self) -> None:
+    def _ensure_config_for_existing_background(self) -> None:
         with suppress(ValueError):
-            current = self._normalize_config(self._public_config())
+            public_config = self._public_config()
+            current = self._normalize_config(public_config)
             config = self._with_theme_colors(current)
-            if config != current:
+            raw_background_images = self.config.get("background_images", [])
+            if config != current or raw_background_images != config["background_images"]:
                 self._save_config(config)
 
     def _with_theme_colors(
@@ -444,23 +608,18 @@ class PalettePlugin(Star):
         self.config = config
 
     async def _save_background_upload(self, upload_file) -> str:
-        source_name = upload_file.filename or "background.png"
-        suffix = Path(source_name).suffix.lower()
-        if suffix not in ALLOWED_BACKGROUND_EXTENSIONS:
-            raise ValueError("仅支持 jpg、png、webp、gif 图片。")
-
         if (
             upload_file.content_length is not None
             and upload_file.content_length > MAX_BACKGROUND_BYTES
         ):
             raise ValueError("背景图片不能超过 10MB。")
 
-        filename = f"background-{uuid4().hex}{suffix}"
         self.paths.ensure_runtime_dirs()
-        target_path = self.paths.resolve_background_file(filename)
+        background_id = uuid4().hex
         first_bytes = b""
         total_size = 0
-        temp_path = target_path.with_suffix(f"{target_path.suffix}.tmp")
+        temp_path = self.paths.background_dir / f"background-{background_id}.upload.tmp"
+        target_path: Path | None = None
 
         try:
             await upload_file.seek(0)
@@ -482,13 +641,20 @@ class PalettePlugin(Star):
 
             if total_size == 0:
                 raise ValueError("背景图片内容为空。")
-            if not self._looks_like_image(first_bytes, suffix):
-                raise ValueError("图片内容与文件类型不匹配。")
+            detected_suffix = self._detect_image_suffix(first_bytes)
+            if detected_suffix is None:
+                raise ValueError("仅支持 jpg、png、webp、gif 图片。")
 
+            # 以真实文件头为准，兼容“jpg 文件名里装着 png 内容”的图片。
+            filename = f"background-{background_id}{detected_suffix}"
+            target_path = self.paths.resolve_background_file(filename)
             temp_path.replace(target_path)
         except Exception:
             with suppress(FileNotFoundError):
                 temp_path.unlink()
+            if target_path is not None:
+                with suppress(FileNotFoundError):
+                    target_path.unlink()
             raise
         return filename
 
@@ -500,18 +666,6 @@ class PalettePlugin(Star):
             raise ValueError("背景图片不存在，请重新上传。")
         return path
 
-    def _cleanup_replaced_background(
-        self,
-        previous_filename: str,
-        current_filename: str,
-    ) -> None:
-        previous_filename = previous_filename.strip()
-        if not previous_filename or previous_filename == current_filename:
-            return
-        with suppress(ValueError, FileNotFoundError):
-            previous_path = self._resolve_background(previous_filename)
-            previous_path.unlink()
-
     def _background_url(self, filename: str) -> str:
         filename = filename.strip()
         if not filename:
@@ -520,6 +674,63 @@ class PalettePlugin(Star):
             f"/api/v1/plugins/extensions/{PLUGIN_NAME}/backgrounds/"
             f"{quote(filename)}"
         )
+
+    def _background_preview_url(self, filename: str) -> str:
+        filename = filename.strip()
+        if not filename:
+            return ""
+        return (
+            f"/api/v1/plugins/extensions/{PLUGIN_NAME}/background-preview"
+            f"?filename={quote(filename)}"
+        )
+
+    def _background_item(self, filename: str, selected: bool) -> dict[str, Any]:
+        return {
+            "filename": filename,
+            "url": self._background_url(filename),
+            "thumbnail_url": self._background_preview_url(filename),
+            "preview_url": self._background_preview_url(filename),
+            "selected": selected,
+        }
+
+    def _public_background_images(self, current_background: str) -> list[str]:
+        background_images = self._normalize_background_images(
+            self.config.get("background_images", [])
+        )
+        if current_background:
+            with suppress(ValueError):
+                self._resolve_background(current_background, must_exist=True)
+                background_images = self._append_background_image(
+                    background_images,
+                    current_background,
+                )
+        return background_images
+
+    def _normalize_background_images(self, value: Any) -> list[str]:
+        if not isinstance(value, list):
+            return []
+
+        background_images: list[str] = []
+        for item in value:
+            if not isinstance(item, str):
+                continue
+            filename = item.strip()
+            if not filename or filename in background_images:
+                continue
+            with suppress(ValueError):
+                self._resolve_background(filename, must_exist=True)
+                background_images.append(filename)
+        return background_images
+
+    @staticmethod
+    def _append_background_image(
+        background_images: list[str],
+        filename: str,
+    ) -> list[str]:
+        filename = filename.strip()
+        if not filename or filename in background_images:
+            return list(background_images)
+        return [*background_images, filename]
 
     @staticmethod
     def _normalize_bool(value: Any, default: bool) -> bool:
@@ -562,13 +773,13 @@ class PalettePlugin(Star):
         return value[:20000]
 
     @staticmethod
-    def _looks_like_image(content: bytes, suffix: str) -> bool:
-        if suffix in {".jpg", ".jpeg"}:
-            return content.startswith(b"\xff\xd8\xff")
-        if suffix == ".png":
-            return content.startswith(b"\x89PNG\r\n\x1a\n")
-        if suffix == ".webp":
-            return content.startswith(b"RIFF") and content[8:12] == b"WEBP"
-        if suffix == ".gif":
-            return content.startswith((b"GIF87a", b"GIF89a"))
-        return False
+    def _detect_image_suffix(content: bytes) -> str | None:
+        if content.startswith(b"\xff\xd8\xff"):
+            return ".jpg"
+        if content.startswith(b"\x89PNG\r\n\x1a\n"):
+            return ".png"
+        if content.startswith(b"RIFF") and content[8:12] == b"WEBP":
+            return ".webp"
+        if content.startswith((b"GIF87a", b"GIF89a")):
+            return ".gif"
+        return None

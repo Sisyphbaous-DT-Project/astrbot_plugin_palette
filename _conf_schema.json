@@ -9,13 +9,22 @@
     "description": "背景图片路径",
     "type": "string",
     "default": "",
-    "hint": "通过插件设置页上传后自动填入。"
+    "hint": "当前选中的背景图片文件名，通过插件设置页切换后自动填入。"
+  },
+  "background_images": {
+    "description": "背景图库",
+    "type": "list",
+    "items": {
+      "type": "string"
+    },
+    "default": [],
+    "hint": "由插件设置页维护的背景图片文件名列表。"
   },
   "background_fit": {
     "description": "背景填充方式",
     "type": "string",
     "default": "cover",
-    "options": ["cover", "contain", "auto"],
+    "options": ["cover", "contain", "stretch", "auto"],
     "hint": "控制背景图片如何填充 WebUI 可视区域。"
   },
   "background_position": {
@@ -78,6 +87,12 @@
     "type": "float",
     "default": 1.0,
     "hint": "取值 0 到 2；1 表示保持原饱和度。"
+  },
+  "random_background_on_load": {
+    "description": "打开或刷新时随机背景",
+    "type": "bool",
+    "default": false,
+    "hint": "开启后每次打开或刷新 AstrBot WebUI 会从图库随机选一张背景，并写回当前背景。"
   },
   "auto_theme_enabled": {
     "description": "自动同步壁纸主题色",

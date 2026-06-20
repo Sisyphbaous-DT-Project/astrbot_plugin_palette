@@ -232,6 +232,118 @@ dt {
   overflow-wrap: anywhere;
 }
 
+.gallery-toolbar {
+  align-items: center;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+  margin-top: 16px;
+}
+
+.gallery-toolbar > span {
+  color: #475569;
+  font-weight: 700;
+}
+
+:root[data-theme="dark"] .gallery-toolbar > span {
+  color: #cbd5e1;
+}
+
+.background-gallery {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(auto-fill, minmax(132px, 1fr));
+  margin-top: 12px;
+}
+
+.gallery-empty {
+  border: 1px dashed var(--settings-border);
+  border-radius: 8px;
+  font-size: 13px;
+  grid-column: 1 / -1;
+  margin: 0;
+  padding: 16px;
+  text-align: center;
+}
+
+.gallery-item {
+  border: 1px solid var(--settings-border);
+  border-radius: 8px;
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  padding: 8px;
+}
+
+.gallery-item.is-selected {
+  border-color: var(--settings-accent);
+  box-shadow: 0 0 0 3px var(--settings-focus);
+}
+
+.gallery-select {
+  aspect-ratio: 16 / 10;
+  background: var(--settings-control-bg);
+  border: 0;
+  border-radius: 6px;
+  display: block;
+  min-height: 0;
+  overflow: hidden;
+  padding: 0;
+  width: 100%;
+}
+
+.gallery-select:hover {
+  background: var(--settings-control-bg);
+}
+
+.gallery-select img {
+  display: block;
+  height: 100%;
+  object-fit: cover;
+  width: 100%;
+}
+
+.gallery-meta {
+  align-items: center;
+  display: grid;
+  gap: 8px;
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.gallery-meta span {
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gallery-delete {
+  background: transparent;
+  border-color: rgba(194, 65, 12, 0.45);
+  color: #c2410c;
+  font-size: 12px;
+  min-height: 30px;
+  padding: 4px 8px;
+}
+
+.gallery-delete:hover {
+  background: rgba(194, 65, 12, 0.12);
+}
+
+.gallery-delete.is-confirming {
+  background: rgba(194, 65, 12, 0.18);
+  border-color: rgba(194, 65, 12, 0.8);
+  color: #9a3412;
+}
+
+:root[data-theme="dark"] .gallery-delete {
+  color: #fdba74;
+}
+
+:root[data-theme="dark"] .gallery-delete.is-confirming {
+  color: #fed7aa;
+}
+
 .theme-color-panel {
   gap: 14px;
 }

@@ -1,20 +1,39 @@
 # AstrBot调色盘
 
-AstrBot调色盘是一个 AstrBot WebUI 美化插件。当前版本聚焦于运行时背景图、透明界面、文字可读性增强和壁纸主题色联动，让 Dashboard 可以在不修改 AstrBot 源码的前提下换上自定义壁纸。
+AstrBot调色盘是一个 AstrBot WebUI 美化插件。当前版本聚焦于背景图库、透明界面、文字可读性增强和壁纸主题色联动，让 Dashboard 可以在不修改 AstrBot 源码的前提下换上自定义壁纸。
 
-> 当前版本：`0.2.0`
+> 当前版本：`0.3.0`
 >
 > 兼容 AstrBot：`>=4.26.0-beta1`
 
 ## 功能
 
-- 上传并启用 WebUI 背景图片。
+- 上传多张 WebUI 背景图片，并通过缩略图库一键切换。
+- 支持打开或刷新 WebUI 时从图库随机切换背景。
 - 调整背景填充方式、位置、遮罩、模糊、灰度、亮度、对比度和饱和度。
 - 将 Dashboard 常驻面板透明化，支持完全透明的悬浮文字效果。
 - 提供文字和图标可读性增强，包括柔和阴影和强力描边。
 - 自动读取当前壁纸主题色，并同步 AstrBot 主色与辅色。
 - 提供插件设置页，可在 AstrBot 插件详情页中直接配置。
 - 首次注入后自动推荐切换到 AstrBot 深色主题，用户仍可在 AstrBot 设置中改回其他主题。
+
+## 效果展示
+
+### Dashboard 透明背景
+
+![Dashboard 透明背景](docs/images/dashboard-transparent.png)
+
+### 背景图库与设置页
+
+![背景图库与设置页](docs/images/plugin-settings-gallery.png)
+
+### WebChat 透明化效果
+
+![WebChat 透明化效果](docs/images/webchat-transparent.png)
+
+### 壁纸主题色联动
+
+![壁纸主题色联动](docs/images/theme-color-sync.png)
 
 ## 安装
 
@@ -31,16 +50,17 @@ git clone https://github.com/Sisyphbaous-DT-Project/astrbot_plugin_palette.git
 
 - 插件名：`astrbot_plugin_palette`
 - 展示名：`AstrBot调色盘`
-- 版本：`0.2.0`
+- 版本：`0.3.0`
 
 ## 使用
 
 1. 打开 AstrBot WebUI。
 2. 进入插件管理，找到 `AstrBot调色盘`。
 3. 打开插件设置页。
-4. 上传背景图片。
-5. 按喜好调整透明度、遮罩、背景滤镜、文字增强和主题色联动。
-6. 保存后刷新 WebUI，背景会自动应用到 Dashboard。
+4. 上传一张或多张背景图片。
+5. 在缩略图库中点击图片，切换当前 WebUI 背景。
+6. 按喜好调整透明度、遮罩、背景滤镜、文字增强、随机背景和主题色联动。
+7. 保存后刷新 WebUI，背景会自动应用到 Dashboard。
 
 支持的背景图片格式：
 
@@ -58,7 +78,8 @@ git clone https://github.com/Sisyphbaous-DT-Project/astrbot_plugin_palette.git
 | --- | --- | --- |
 | `enabled` | 是否启用 WebUI 美化 | `true` |
 | `background_image` | 当前背景图片文件名 | `""` |
-| `background_fit` | 背景填充方式，可选 `cover`、`contain`、`auto` | `cover` |
+| `background_images` | 背景图库文件名列表 | `[]` |
+| `background_fit` | 背景填充方式，可选 `cover`、`contain`、`stretch`、`auto` | `cover` |
 | `background_position` | 背景位置 | `center center` |
 | `background_blur` | 背景模糊强度，单位 px | `0` |
 | `background_dim` | 全局暗色遮罩强度 | `0.5` |
@@ -69,6 +90,7 @@ git clone https://github.com/Sisyphbaous-DT-Project/astrbot_plugin_palette.git
 | `background_brightness` | 背景亮度 | `1.0` |
 | `background_contrast` | 背景对比度 | `1.0` |
 | `background_saturation` | 背景饱和度 | `1.0` |
+| `random_background_on_load` | 打开或刷新 WebUI 时随机背景 | `false` |
 | `auto_theme_enabled` | 是否自动同步壁纸主题色 | `true` |
 | `theme_primary` | 自动生成的 AstrBot 主色，格式为 `#RRGGBB` | `""` |
 | `theme_secondary` | 自动生成的 AstrBot 辅色，格式为 `#RRGGBB` | `""` |
@@ -76,7 +98,7 @@ git clone https://github.com/Sisyphbaous-DT-Project/astrbot_plugin_palette.git
 
 ## 主题色联动
 
-`0.2.0` 会在上传壁纸后读取图片主题色，生成一组适合 UI 使用的主色和辅色。主题色联动开启时，插件会把这两个颜色写入 AstrBot 已有的浏览器本地配置：
+`0.3.0` 会在当前壁纸切换后读取图片主题色，生成一组适合 UI 使用的主色和辅色。主题色联动开启时，插件会把这两个颜色写入 AstrBot 已有的浏览器本地配置：
 
 ```text
 themePrimary
@@ -88,6 +110,14 @@ themeSecondary
 关闭“主题色联动”或禁用调色盘时，插件会恢复启用联动前保存的 AstrBot 主色和辅色。没有上传壁纸时，主题色联动不会主动改色。
 
 如果更换了图片但想手动重新读取颜色，可以在设置页点击“重新读取壁纸主题色”。
+
+## 背景图库
+
+上传图片只会加入图库，不会自动切换当前背景。点击缩略图后，插件会把该图片保存为当前背景，并重新读取主题色。
+
+开启“打开或刷新时随机背景”后，Dashboard 每次重新打开或整页刷新都会从图库随机选一张，并写回当前背景。页面内路由切换不会触发随机，避免使用过程中频繁换图。
+
+“拉伸铺满”会让图片完整铺满窗口且不裁切，但可能改变原图比例。
 
 ## 工作方式
 
@@ -126,7 +156,10 @@ data/plugin_data/astrbot_plugin_palette/dashboard_backups
 | `POST` | `/astrbot_plugin_palette/config` | 保存配置 |
 | `GET` | `/astrbot_plugin_palette/theme.css` | 获取运行时主题 CSS |
 | `GET` | `/astrbot_plugin_palette/background-preview` | 获取当前背景预览 |
-| `POST` | `/astrbot_plugin_palette/upload-background` | 上传背景图片 |
+| `POST` | `/astrbot_plugin_palette/upload-background` | 上传背景图片到图库 |
+| `POST` | `/astrbot_plugin_palette/backgrounds/select` | 切换当前背景图片 |
+| `POST` | `/astrbot_plugin_palette/backgrounds/delete` | 删除图库背景图片 |
+| `POST` | `/astrbot_plugin_palette/backgrounds/random-select` | 随机切换并写回当前背景 |
 | `POST` | `/astrbot_plugin_palette/theme-colors/recalculate` | 重新读取当前壁纸主题色 |
 | `GET` | `/astrbot_plugin_palette/backgrounds/<filename>` | 读取背景图片 |
 
@@ -168,6 +201,8 @@ git diff --check
 `0.1.0` 已提供背景图上传、运行时注入、透明化和可读性增强。
 
 `0.2.0` 新增壁纸主题色联动，可以自动读取壁纸颜色并同步 AstrBot 主色与辅色。
+
+`0.3.0` 新增多背景图库、缩略图切换、刷新随机背景和拉伸铺满。
 
 后续版本会继续补齐更多页面的透明化细节，并探索更完整的主题色板推导。
 

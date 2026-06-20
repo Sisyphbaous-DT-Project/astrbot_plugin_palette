@@ -11,7 +11,7 @@ def build_theme_css(config: dict[str, Any]) -> str:
     """生成运行时 Dashboard 主题 CSS。"""
 
     enabled = "1" if config.get("enabled") is True else "0"
-    background_fit = _css_value(config.get("background_fit"), "cover")
+    background_fit = _background_fit_value(config.get("background_fit"))
     background_position = _css_value(
         config.get("background_position"),
         "center center",
@@ -67,7 +67,7 @@ def build_theme_css(config: dict[str, Any]) -> str:
 
     return "\n".join(
         [
-            "/* AstrBot调色盘 0.2.0 运行时主题 CSS */",
+            "/* AstrBot调色盘 0.3.0 运行时主题 CSS */",
             ":root {",
             f"  --astrbot-palette-enabled: {enabled};",
             "  --astrbot-palette-background-image: none;",
@@ -1162,6 +1162,17 @@ def _background_filter(
     if saturation != 1.0:
         filters.append(f"saturate({_css_number(saturation)})")
     return " ".join(filters) if filters else "none"
+
+
+def _background_fit_value(value: Any) -> str:
+    fit = _css_keyword(
+        value,
+        {"cover", "contain", "auto", "stretch"},
+        "cover",
+    )
+    if fit == "stretch":
+        return "100% 100%"
+    return fit
 
 
 def _text_effect_css(mode: str, strength: float) -> str:

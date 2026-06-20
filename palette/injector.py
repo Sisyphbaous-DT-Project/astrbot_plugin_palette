@@ -183,6 +183,7 @@ def _dashboard_target_info(paths: PalettePaths) -> dict[str, str | bool | None]:
 
 def _build_injection_block() -> str:
     config_url = f"/api/v1/plugins/extensions/{PLUGIN_NAME}/config"
+    random_select_url = f"/api/v1/plugins/extensions/{PLUGIN_NAME}/backgrounds/random-select"
     theme_url = f"/api/v1/plugins/extensions/{PLUGIN_NAME}/theme.css"
     return "\n".join(
         [
@@ -191,20 +192,26 @@ def _build_injection_block() -> str:
                 '  <script id="astrbot-palette-bootstrap" '
                 f'data-version="{VERSION}">'
             ),
-            _build_bootstrap_script(config_url, theme_url),
+            _build_bootstrap_script(config_url, random_select_url, theme_url),
             "  </script>",
             "  " + INJECTION_END_MARKER,
         ]
     )
 
 
-def _build_bootstrap_script(config_url: str, theme_url: str) -> str:
+def _build_bootstrap_script(
+    config_url: str,
+    random_select_url: str,
+    theme_url: str,
+) -> str:
     config_url_json = json.dumps(config_url)
+    random_select_url_json = json.dumps(random_select_url)
     theme_url_json = json.dumps(theme_url)
     return f"""(function () {{
     "use strict";
 
     var CONFIG_URL = {config_url_json};
+    var RANDOM_SELECT_URL = {random_select_url_json};
     var THEME_URL = {theme_url_json};
     var STYLE_ID = "astrbot-palette-theme";
     var THEME_COLOR_STYLE_ID = "astrbot-palette-theme-colors";
@@ -225,6 +232,7 @@ def _build_bootstrap_script(config_url: str, theme_url: str) -> str:
     var restoredThemeSecondary = "";
     var loading = false;
     var pendingRefresh = false;
+    var initialRandomPending = true;
 
     function bootstrapRecommendedDarkTheme() {{
       try {{
@@ -387,6 +395,9 @@ def _build_bootstrap_script(config_url: str, theme_url: str) -> str:
     }}
 
     function normalizeFit(value) {{
+      if (value === "stretch") {{
+        return "100% 100%";
+      }}
       return ["cover", "contain", "auto"].indexOf(value) === -1 ? "cover" : value;
     }}
 
@@ -619,6 +630,22 @@ def _build_bootstrap_script(config_url: str, theme_url: str) -> str:
       return response.json();
     }}
 
+    async function postJson(url, token, body) {{
+      var headers = buildHeaders(token, "application/json");
+      headers["Content-Type"] = "application/json";
+      var response = await fetch(withCacheBust(url), {{
+        method: "POST",
+        cache: "no-store",
+        credentials: "same-origin",
+        headers: headers,
+        body: JSON.stringify(body || {{}}),
+      }});
+      if (!response.ok) {{
+        throw new Error("HTTP " + response.status);
+      }}
+      return response.json();
+    }}
+
     async function fetchBackground(url, token) {{
       if (!url) {{
         lastBackgroundUrl = "";
@@ -643,7 +670,38 @@ def _build_bootstrap_script(config_url: str, theme_url: str) -> str:
       return currentObjectUrl;
     }}
 
-    async function refreshPalette() {{
+    async function resolveConfigForRefresh(token, allowInitialRandom) {{
+      var config = await fetchJson(CONFIG_URL, token);
+      if (
+        allowInitialRandom &&
+        initialRandomPending &&
+        config.enabled &&
+        config.random_background_on_load &&
+        Array.isArray(config.background_images) &&
+        (
+          config.background_images.length > 1 ||
+          (config.background_images.length === 1 && !config.background_image)
+        )
+      ) {{
+        initialRandomPending = false;
+        try {{
+          var randomResponse = await postJson(RANDOM_SELECT_URL, token, {{}});
+          if (randomResponse && randomResponse.config) {{
+            return randomResponse.config;
+          }}
+        }} catch (error) {{
+          if (!isExpectedAuthFailure(error)) {{
+            console.warn("[AstrBot调色盘] 随机背景切换失败：", error);
+          }}
+        }}
+      }}
+      if (allowInitialRandom) {{
+        initialRandomPending = false;
+      }}
+      return config;
+    }}
+
+    async function refreshPalette(options) {{
       if (loading) {{
         pendingRefresh = true;
         return;
@@ -652,7 +710,10 @@ def _build_bootstrap_script(config_url: str, theme_url: str) -> str:
       try {{
         var token = getToken();
         lastToken = token;
-        var config = await fetchJson(CONFIG_URL, token);
+        var config = await resolveConfigForRefresh(
+          token,
+          Boolean(options && options.allowInitialRandom) || initialRandomPending
+        );
 
         if (!config.enabled || !config.background_url) {{
           setInactive();
@@ -681,7 +742,9 @@ def _build_bootstrap_script(config_url: str, theme_url: str) -> str:
         loading = false;
         if (pendingRefresh) {{
           pendingRefresh = false;
-          window.setTimeout(refreshPalette, 80);
+          window.setTimeout(function () {{
+            refreshPalette();
+          }}, 80);
         }}
       }}
     }}
@@ -716,5 +779,5 @@ def _build_bootstrap_script(config_url: str, theme_url: str) -> str:
     }}, 1500);
 
     bootstrapRecommendedDarkTheme();
-    refreshPalette();
+    refreshPalette({{ allowInitialRandom: true }});
   }})();"""

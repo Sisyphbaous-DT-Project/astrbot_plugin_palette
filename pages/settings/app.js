@@ -8,8 +8,10 @@ const saveButton = document.getElementById("save");
 const recalculateThemeButton = document.getElementById("recalculate-theme");
 const enabledInput = document.getElementById("enabled");
 const autoThemeInput = document.getElementById("auto-theme-enabled");
+const randomBackgroundInput = document.getElementById("random-background-on-load");
 const fileInput = document.getElementById("background-file");
 const backgroundName = document.getElementById("background-name");
+const backgroundGallery = document.getElementById("background-gallery");
 const fitInput = document.getElementById("background-fit");
 const positionInput = document.getElementById("background-position");
 const blurInput = document.getElementById("background-blur");
@@ -38,8 +40,12 @@ const themePrimaryValue = document.getElementById("theme-primary-value");
 const themeSecondaryValue = document.getElementById("theme-secondary-value");
 
 let currentConfig = null;
+let latestStatus = null;
 let localPreviewUrl = "";
 let remotePreviewDataUrl = "";
+let pendingDeleteFilename = "";
+let pendingDeleteTimer = 0;
+const previewCache = new Map();
 
 function applyThemeFromContext(context) {
   const fallbackTheme = new URLSearchParams(window.location.search).get("theme");
@@ -62,11 +68,28 @@ function setBusy(isBusy) {
   refreshButton.disabled = isBusy;
   recalculateThemeButton.disabled = isBusy || !currentConfig?.background_image;
   fileInput.disabled = isBusy;
+  backgroundGallery
+    .querySelectorAll("button")
+    .forEach((button) => {
+      button.disabled = isBusy;
+    });
 }
 
 function setStatus(message, tone = "muted") {
   statusText.textContent = message;
   statusText.dataset.tone = tone;
+}
+
+function clearPendingDelete() {
+  pendingDeleteFilename = "";
+  if (pendingDeleteTimer) {
+    window.clearTimeout(pendingDeleteTimer);
+    pendingDeleteTimer = 0;
+  }
+  backgroundGallery.querySelectorAll(".gallery-delete").forEach((button) => {
+    button.classList.remove("is-confirming");
+    button.textContent = "删除";
+  });
 }
 
 function notifyPaletteRefresh() {
@@ -94,6 +117,21 @@ async function loadRemotePreview(config) {
   updatePreview();
 }
 
+async function getPreviewDataUrl(filename) {
+  if (!filename) {
+    return "";
+  }
+  if (previewCache.has(filename)) {
+    return previewCache.get(filename);
+  }
+  const previewResponse = await bridge.apiGet("background-preview", { filename });
+  const dataUrl = previewResponse?.data_url || "";
+  if (dataUrl) {
+    previewCache.set(filename, dataUrl);
+  }
+  return dataUrl;
+}
+
 function renderList(target, rows) {
   target.replaceChildren(
     ...rows.map(([label, value]) => {
@@ -112,6 +150,9 @@ function configFromForm() {
   return {
     enabled: enabledInput.checked,
     background_image: currentConfig?.background_image || "",
+    background_images: Array.isArray(currentConfig?.background_images)
+      ? currentConfig.background_images
+      : [],
     background_fit: fitInput.value,
     background_position: positionInput.value,
     background_blur: Number.parseInt(blurInput.value, 10) || 0,
@@ -123,6 +164,7 @@ function configFromForm() {
     background_brightness: numberFromInput(brightnessInput, 1),
     background_contrast: numberFromInput(contrastInput, 1),
     background_saturation: numberFromInput(saturationInput, 1),
+    random_background_on_load: randomBackgroundInput.checked,
     auto_theme_enabled: autoThemeInput.checked,
     theme_primary: currentConfig?.theme_primary || "",
     theme_secondary: currentConfig?.theme_secondary || "",
@@ -144,10 +186,15 @@ function applyForm(config) {
   brightnessInput.value = String(config.background_brightness ?? 1);
   contrastInput.value = String(config.background_contrast ?? 1);
   saturationInput.value = String(config.background_saturation ?? 1);
+  randomBackgroundInput.checked = Boolean(config.random_background_on_load);
   autoThemeInput.checked = config.auto_theme_enabled !== false;
   advancedCssInput.value = config.advanced_css || "";
   backgroundName.textContent = config.background_image || "未设置";
   syncThemeColorPreview(config);
+  renderGallery(config);
+  if (latestStatus) {
+    renderStatus(latestStatus, config);
+  }
   syncRangeLabels();
   updatePreview();
   recalculateThemeButton.disabled = !currentConfig?.background_image;
@@ -184,9 +231,16 @@ function updatePreview() {
   preview.classList.toggle("is-disabled", !config.enabled);
   preview.classList.toggle("has-image", Boolean(imageUrl));
   previewImage.src = imageUrl || "";
-  previewImage.style.objectFit = config.background_fit;
+  previewImage.style.objectFit = previewObjectFit(config.background_fit);
   previewImage.style.objectPosition = config.background_position;
   previewImage.alt = imageUrl ? "当前背景预览" : "";
+}
+
+function previewObjectFit(value) {
+  if (value === "stretch") {
+    return "fill";
+  }
+  return ["cover", "contain", "auto"].includes(value) ? value : "cover";
 }
 
 function buildBackgroundFilter(config) {
@@ -243,15 +297,86 @@ function numberFromInput(input, fallback) {
 }
 
 function renderStatus(status, config) {
+  latestStatus = status;
   renderList(statusList, [
     ["插件", `${status.plugin?.name || "unknown"} ${status.plugin?.version || ""}`],
     ["美化", config.enabled ? "已启用" : "未启用"],
+    ["图库", `${config.background_images?.length || 0} 张`],
+    ["随机", config.random_background_on_load ? "打开或刷新时随机" : "关闭"],
     ["主题色", config.auto_theme_enabled ? "自动同步" : "未同步"],
     ["主色", config.theme_primary || "未生成"],
     ["辅色", config.theme_secondary || "未生成"],
     ["注入", status.injection?.message || "未知"],
     ["图片", config.background_image || "未设置"],
   ]);
+}
+
+function renderGallery(config) {
+  const items = Array.isArray(config.background_items) ? config.background_items : [];
+  if (!items.length) {
+    const empty = document.createElement("p");
+    empty.className = "gallery-empty";
+    empty.textContent = "图库里还没有图片。";
+    backgroundGallery.replaceChildren(empty);
+    return;
+  }
+
+  backgroundGallery.replaceChildren(
+    ...items.map((item) => {
+      const filename = item.filename || "";
+      const tile = document.createElement("article");
+      tile.className = "gallery-item";
+      tile.classList.toggle("is-selected", filename === config.background_image);
+
+      const selectButton = document.createElement("button");
+      selectButton.className = "gallery-select";
+      selectButton.type = "button";
+      selectButton.dataset.galleryAction = "select";
+      selectButton.dataset.filename = filename;
+      selectButton.title = "切换到这张背景";
+
+      const image = document.createElement("img");
+      image.alt = filename ? `背景缩略图 ${filename}` : "背景缩略图";
+      image.loading = "lazy";
+      image.decoding = "async";
+      selectButton.append(image);
+
+      void hydrateGalleryImage(filename, image);
+
+      const meta = document.createElement("div");
+      meta.className = "gallery-meta";
+
+      const name = document.createElement("span");
+      name.textContent = filename || "未知图片";
+
+      const deleteButton = document.createElement("button");
+      deleteButton.className = "gallery-delete";
+      deleteButton.type = "button";
+      deleteButton.dataset.galleryAction = "delete";
+      deleteButton.dataset.filename = filename;
+      deleteButton.title = "删除这张背景";
+      deleteButton.textContent = "删除";
+      deleteButton.classList.toggle("is-confirming", filename === pendingDeleteFilename);
+      if (filename === pendingDeleteFilename) {
+        deleteButton.textContent = "确认删除";
+      }
+
+      meta.append(name, deleteButton);
+      tile.append(selectButton, meta);
+      return tile;
+    }),
+  );
+}
+
+async function hydrateGalleryImage(filename, image) {
+  try {
+    const dataUrl = await getPreviewDataUrl(filename);
+    if (dataUrl) {
+      image.src = dataUrl;
+    }
+  } catch (error) {
+    console.warn("[AstrBot调色盘] 缩略图读取失败：", error);
+  }
 }
 
 function syncThemeColorPreview(config) {
@@ -285,6 +410,7 @@ async function loadPaletteState() {
       bridge.apiGet("status"),
       bridge.apiGet("config"),
     ]);
+    latestStatus = status;
     clearLocalPreview();
     applyForm(config);
     await loadRemotePreview(config);
@@ -315,33 +441,38 @@ async function saveConfig() {
   }
 }
 
-async function uploadBackground(file) {
-  if (!file) {
+async function uploadBackgroundFiles(files) {
+  const imageFiles = Array.from(files || []);
+  if (!imageFiles.length) {
     return;
   }
-  if (!file.type.startsWith("image/")) {
-    setStatus("请选择图片文件", "danger");
-    return;
-  }
-  if (file.size > 10 * 1024 * 1024) {
-    setStatus("图片不能超过 10MB", "danger");
-    return;
-  }
-
-  clearLocalPreview();
-  localPreviewUrl = URL.createObjectURL(file);
-  backgroundName.textContent = file.name;
-  updatePreview();
 
   setBusy(true);
-  setStatus("正在上传背景图片");
+  setStatus(`正在上传 ${imageFiles.length} 张背景图片`);
   try {
-    const response = await bridge.upload("upload-background", file);
+    for (const file of imageFiles) {
+      if (!file.type.startsWith("image/")) {
+        throw new Error(`请选择图片文件：${file.name}`);
+      }
+      if (file.size > 10 * 1024 * 1024) {
+        throw new Error(`图片不能超过 10MB：${file.name}`);
+      }
+    }
+
+    let latestConfig = currentConfig;
+    let uploadedCount = 0;
+    for (const file of imageFiles) {
+      const response = await bridge.upload("upload-background", file);
+      latestConfig = response.config;
+      uploadedCount += 1;
+      setStatus(`已上传 ${uploadedCount}/${imageFiles.length} 张背景图片`);
+    }
     clearLocalPreview();
-    applyForm(response.config);
-    await loadRemotePreview(response.config);
+    previewCache.clear();
+    applyForm(latestConfig);
+    await loadRemotePreview(latestConfig);
     notifyPaletteRefresh();
-    setStatus(response.message || "背景图片已上传", "success");
+    setStatus(`已加入图库 ${uploadedCount} 张背景图片`, "success");
   } catch (error) {
     clearLocalPreview();
     if (currentConfig) {
@@ -351,6 +482,70 @@ async function uploadBackground(file) {
   } finally {
     setBusy(false);
     fileInput.value = "";
+  }
+}
+
+async function selectBackground(filename) {
+  if (!filename || filename === currentConfig?.background_image) {
+    return;
+  }
+  clearPendingDelete();
+  setBusy(true);
+  setStatus("正在切换背景图片");
+  try {
+    const response = await bridge.apiPost("backgrounds/select", {
+      background_image: filename,
+    });
+    applyForm(response.config);
+    await loadRemotePreview(response.config);
+    notifyPaletteRefresh();
+    setStatus(response.message || "背景图片已切换", "success");
+  } catch (error) {
+    setStatus(error?.message || "切换失败", "danger");
+  } finally {
+    setBusy(false);
+  }
+}
+
+function requestDeleteBackground(filename) {
+  if (!filename) {
+    return;
+  }
+  if (pendingDeleteFilename !== filename) {
+    clearPendingDelete();
+    pendingDeleteFilename = filename;
+    renderGallery(currentConfig || {});
+    setStatus("再点一次确认删除这张背景图片", "danger");
+    pendingDeleteTimer = window.setTimeout(() => {
+      clearPendingDelete();
+      setStatus("已取消删除确认");
+    }, 5000);
+    return;
+  }
+
+  void deleteBackground(filename);
+}
+
+async function deleteBackground(filename) {
+  if (!filename) {
+    return;
+  }
+  clearPendingDelete();
+  setBusy(true);
+  setStatus("正在删除背景图片");
+  try {
+    const response = await bridge.apiPost("backgrounds/delete", {
+      background_image: filename,
+    });
+    previewCache.delete(filename);
+    applyForm(response.config);
+    await loadRemotePreview(response.config);
+    notifyPaletteRefresh();
+    setStatus(response.message || "背景图片已删除", "success");
+  } catch (error) {
+    setStatus(error?.message || "删除失败", "danger");
+  } finally {
+    setBusy(false);
   }
 }
 
@@ -386,7 +581,35 @@ recalculateThemeButton.addEventListener("click", () => {
 });
 
 fileInput.addEventListener("change", () => {
-  void uploadBackground(fileInput.files?.[0]);
+  void uploadBackgroundFiles(fileInput.files);
+});
+
+backgroundGallery.addEventListener("pointerdown", (event) => {
+  const button = event.target.closest("[data-gallery-action]");
+  if (!button || !backgroundGallery.contains(button)) {
+    return;
+  }
+  event.preventDefault();
+  event.stopPropagation();
+});
+
+backgroundGallery.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-gallery-action]");
+  if (!button || !backgroundGallery.contains(button)) {
+    return;
+  }
+
+  event.preventDefault();
+  event.stopPropagation();
+
+  const filename = button.dataset.filename || "";
+  if (button.dataset.galleryAction === "select") {
+    void selectBackground(filename);
+    return;
+  }
+  if (button.dataset.galleryAction === "delete") {
+    requestDeleteBackground(filename);
+  }
 });
 
 form.addEventListener("input", () => {
