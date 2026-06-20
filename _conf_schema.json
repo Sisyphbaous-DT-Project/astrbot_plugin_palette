@@ -79,6 +79,24 @@
     "default": 1.0,
     "hint": "取值 0 到 2；1 表示保持原饱和度。"
   },
+  "auto_theme_enabled": {
+    "description": "自动同步壁纸主题色",
+    "type": "bool",
+    "default": true,
+    "hint": "开启后会读取当前壁纸主题色，并写入 AstrBot 的主色和辅色。"
+  },
+  "theme_primary": {
+    "description": "自动生成的主色",
+    "type": "string",
+    "default": "",
+    "hint": "格式为 #RRGGBB；上传壁纸或手动重新读取后自动生成。"
+  },
+  "theme_secondary": {
+    "description": "自动生成的辅色",
+    "type": "string",
+    "default": "",
+    "hint": "格式为 #RRGGBB；上传壁纸或手动重新读取后自动生成。"
+  },
   "advanced_css": {
     "description": "高级自定义 CSS",
     "type": "text",

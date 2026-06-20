@@ -67,7 +67,7 @@ def build_theme_css(config: dict[str, Any]) -> str:
 
     return "\n".join(
         [
-            "/* AstrBot调色盘 0.1.0 运行时主题 CSS */",
+            "/* AstrBot调色盘 0.2.0 运行时主题 CSS */",
             ":root {",
             f"  --astrbot-palette-enabled: {enabled};",
             "  --astrbot-palette-background-image: none;",
@@ -144,6 +144,8 @@ def build_theme_css(config: dict[str, Any]) -> str:
             _extension_surface_css(),
             "",
             _config_dialog_surface_css(),
+            "",
+            _platform_dialog_surface_css(),
             "",
             _extension_dialog_surface_css(),
             "",
@@ -740,6 +742,131 @@ def _config_dialog_surface_css() -> str:
             "html.astrbot-palette-active .v-overlay-container .v-dialog .v-card:has(.config-section) [style*=\"background:rgb(var(--v-theme-surface))\"] {",
             f"  background: {surface} !important;",
             "  box-shadow: none !important;",
+            "}",
+        ]
+    )
+
+
+def _platform_dialog_surface_css() -> str:
+    surface = "rgba(var(--v-theme-surface), var(--astrbot-palette-surface-opacity, 0))"
+    neutral_soft = (
+        "rgba(var(--v-theme-on-surface), "
+        "calc(var(--astrbot-palette-surface-opacity, 0) * 0.08))"
+    )
+    primary_soft = (
+        "rgba(var(--v-theme-primary), "
+        "calc(var(--astrbot-palette-surface-opacity, 0) * 0.12))"
+    )
+    border = (
+        "rgba(var(--v-theme-on-surface), "
+        "calc(var(--astrbot-palette-surface-opacity, 0) * 0.18))"
+    )
+    route_card = (
+        "html.astrbot-palette-active .v-overlay-container .v-dialog "
+        ".v-card:has(.route-source-cell)"
+    )
+    config_drawer = (
+        "html.astrbot-palette-active .v-overlay-container .config-drawer-card"
+    )
+
+    solid_surfaces = [
+        route_card,
+        f"{route_card} > .v-card-item",
+        f"{route_card} > .v-card-title",
+        f"{route_card} > .v-card-text",
+        f"{route_card} > .v-card-actions",
+        f"{route_card} .v-data-table",
+        f"{route_card} .v-table",
+        f"{route_card} .v-table__wrapper",
+        f"{route_card} .v-table__wrapper > table",
+        f"{route_card} .v-table__wrapper > table > thead",
+        f"{route_card} .v-table__wrapper > table > thead > tr",
+        f"{route_card} .v-table__wrapper > table > tbody",
+        f"{route_card} .v-table__wrapper > table > tbody > tr",
+        f"{route_card} .v-table__wrapper > table > tbody > tr > td",
+        f"{route_card} .v-table__wrapper > table > thead > tr > th",
+        f"{route_card} .v-data-table-footer",
+        f"{config_drawer}",
+        f"{config_drawer} .config-drawer-header",
+        f"{config_drawer} .config-drawer-content",
+        f"{config_drawer} .config-page",
+        f"{config_drawer} .config-panel",
+        f"{config_drawer} .config-toolbar",
+        f"{config_drawer} .config-content",
+        f"{config_drawer} .config-section",
+        f"{config_drawer} .config-item",
+        f"{config_drawer} .config-item-wrapper",
+        f"{config_drawer} .nested-container",
+        f"{config_drawer} .object-config",
+        f"{config_drawer} .simple-config",
+        f"{config_drawer} .array-item",
+        f"{config_drawer} .object-item",
+        f"{config_drawer} .v-banner.unsaved-changes-banner",
+    ]
+    soft_surfaces = [
+        f"{route_card} .v-table__wrapper > table > tbody > tr:hover",
+        f"{route_card} .v-field",
+        f"{route_card} .v-list",
+        f"{route_card} .route-source-mode-link",
+        f"{config_drawer} .v-card",
+        f"{config_drawer} .config-page .v-card",
+        f"{config_drawer} .config-row:hover",
+        f"{config_drawer} .collapsed-config-toggle-row",
+        f"{config_drawer} .plugin-set-display-row",
+        f"{config_drawer} .persona-preview-row",
+        f"{config_drawer} .selected-plugins-full-width",
+        f"{config_drawer} .template-list-editor",
+        f"{config_drawer} .object-editor",
+        f"{config_drawer} .config-item-card",
+        f"{config_drawer} .list-config-item",
+        f"{config_drawer} .storage-cleanup-panel",
+        f"{config_drawer} .v-field",
+        f"{config_drawer} .v-list",
+        f"{config_drawer} .v-list-item",
+    ]
+    bordered = [
+        f"{route_card} .v-data-table",
+        f"{route_card} .v-table",
+        f"{route_card} .v-table__wrapper",
+        f"{route_card} .v-table__wrapper > table > thead > tr > th",
+        f"{route_card} .v-table__wrapper > table > tbody > tr > td",
+        f"{route_card} .v-field",
+        f"{config_drawer}",
+        f"{config_drawer} .v-divider",
+        f"{config_drawer} .config-section",
+        f"{config_drawer} .config-row",
+        f"{config_drawer} .config-item",
+        f"{config_drawer} .nested-container",
+        f"{config_drawer} .v-field",
+    ]
+
+    return "\n".join(
+        [
+            ",\n".join(solid_surfaces)
+            + " {\n"
+            f"  background: {surface} !important;\n"
+            "  box-shadow: none !important;\n"
+            "  backdrop-filter: none !important;\n"
+            f"  border-color: {border} !important;\n"
+            "}",
+            "",
+            ",\n".join(soft_surfaces)
+            + " {\n"
+            f"  background: {neutral_soft} !important;\n"
+            "  box-shadow: none !important;\n"
+            f"  border-color: {border} !important;\n"
+            "}",
+            "",
+            ",\n".join(bordered)
+            + " {\n"
+            f"  border-color: {border} !important;\n"
+            "}",
+            "",
+            f"{route_card} .v-btn:not(.bg-primary):not(.bg-secondary):not(.bg-success):not(.bg-warning):not(.bg-error):not(.bg-info) "
+            "{\n"
+            f"  background: {primary_soft} !important;\n"
+            "  box-shadow: none !important;\n"
+            f"  border-color: {border} !important;\n"
             "}",
         ]
     )

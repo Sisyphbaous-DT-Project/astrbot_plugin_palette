@@ -25,6 +25,7 @@ from .palette.constants import (
     ROUTE_PREFIX,
     VERSION,
 )
+from .palette.colors import extract_theme_colors, normalize_hex_color
 from .palette.injector import ensure_dashboard_injection
 from .palette.paths import PalettePaths
 from .palette.theme import build_theme_css
@@ -39,6 +40,7 @@ class PalettePlugin(Star):
         self.config: Mapping[str, Any] = config if config is not None else {}
         self.paths = PalettePaths()
         self.injection_status = ensure_dashboard_injection(self.paths)
+        self._ensure_theme_colors_for_existing_background()
 
         context.register_web_api(
             f"{ROUTE_PREFIX}/status",
@@ -63,6 +65,12 @@ class PalettePlugin(Star):
             self.save_config,
             ["POST"],
             "保存 AstrBot 调色盘配置",
+        )
+        context.register_web_api(
+            f"{ROUTE_PREFIX}/theme-colors/recalculate",
+            self.recalculate_theme_colors,
+            ["POST"],
+            "重新读取背景图主题色",
         )
         context.register_web_api(
             f"{ROUTE_PREFIX}/background-preview",
@@ -108,6 +116,7 @@ class PalettePlugin(Star):
 
         try:
             config = self._normalize_config(payload)
+            config = self._with_theme_colors(config)
             self.injection_status = ensure_dashboard_injection(self.paths)
             self._save_config(config)
         except ValueError as exc:
@@ -135,6 +144,7 @@ class PalettePlugin(Star):
                     "background_image": saved_filename,
                 }
             )
+            config = self._with_theme_colors(config, force=True)
             self.injection_status = ensure_dashboard_injection(self.paths)
             self._save_config(config)
             self._cleanup_replaced_background(previous_background, saved_filename)
@@ -146,6 +156,23 @@ class PalettePlugin(Star):
                 "message": "背景图片已上传。",
                 "background_image": saved_filename,
                 "background_url": self._background_url(saved_filename),
+                "config": self._public_config(),
+            }
+        )
+
+    async def recalculate_theme_colors(self):
+        try:
+            config = self._with_theme_colors(
+                self._normalize_config(self._public_config()),
+                force=True,
+            )
+            self._save_config(config)
+        except ValueError as exc:
+            return error_response(str(exc))
+
+        return json_response(
+            {
+                "message": "主题色已重新读取。",
                 "config": self._public_config(),
             }
         )
@@ -231,6 +258,13 @@ class PalettePlugin(Star):
                 "background_saturation",
                 1.0,
             ),
+            "auto_theme_enabled": self._config_bool("auto_theme_enabled", True),
+            "theme_primary": normalize_hex_color(
+                self._config_str("theme_primary", "")
+            ),
+            "theme_secondary": normalize_hex_color(
+                self._config_str("theme_secondary", "")
+            ),
             "advanced_css": self._config_str("advanced_css", ""),
             "background_url": self._background_url(
                 self._config_str("background_image", ""),
@@ -290,6 +324,13 @@ class PalettePlugin(Star):
         if text_enhancement_mode not in {"off", "soft_shadow", "stroke"}:
             raise ValueError("文字增强模式不正确。")
 
+        theme_primary = normalize_hex_color(
+            payload.get("theme_primary", current["theme_primary"])
+        )
+        theme_secondary = normalize_hex_color(
+            payload.get("theme_secondary", current["theme_secondary"])
+        )
+
         return {
             "enabled": self._normalize_bool(
                 payload.get("enabled", current["enabled"]),
@@ -348,9 +389,48 @@ class PalettePlugin(Star):
                 0.0,
                 2.0,
             ),
+            "auto_theme_enabled": self._normalize_bool(
+                payload.get("auto_theme_enabled", current["auto_theme_enabled"]),
+                current["auto_theme_enabled"],
+            ),
+            "theme_primary": theme_primary,
+            "theme_secondary": theme_secondary,
             "advanced_css": self._normalize_advanced_css(
                 payload.get("advanced_css", current["advanced_css"])
             ),
+        }
+
+    def _ensure_theme_colors_for_existing_background(self) -> None:
+        with suppress(ValueError):
+            current = self._normalize_config(self._public_config())
+            config = self._with_theme_colors(current)
+            if config != current:
+                self._save_config(config)
+
+    def _with_theme_colors(
+        self,
+        config: dict[str, Any],
+        *,
+        force: bool = False,
+    ) -> dict[str, Any]:
+        filename = str(config.get("background_image") or "").strip()
+        if not filename:
+            if force:
+                config = {**config, "theme_primary": "", "theme_secondary": ""}
+            return config
+
+        if (
+            not force
+            and normalize_hex_color(config.get("theme_primary"))
+            and normalize_hex_color(config.get("theme_secondary"))
+        ):
+            return config
+
+        background_path = self._resolve_background(filename, must_exist=True)
+        colors = extract_theme_colors(background_path)
+        return {
+            **config,
+            **colors.to_dict(),
         }
 
     def _save_config(self, config: dict[str, Any]) -> None:

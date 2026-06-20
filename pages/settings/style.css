@@ -232,6 +232,62 @@ dt {
   overflow-wrap: anywhere;
 }
 
+.theme-color-panel {
+  gap: 14px;
+}
+
+.theme-color-panel .section-title {
+  margin-bottom: 0;
+}
+
+.theme-color-grid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.theme-color-swatch {
+  align-items: center;
+  border: 1px solid var(--settings-border);
+  border-radius: 8px;
+  display: flex;
+  gap: 12px;
+  min-width: 0;
+  padding: 10px;
+}
+
+.theme-color-swatch > span {
+  border: 1px solid rgba(100, 116, 139, 0.35);
+  border-radius: 50%;
+  flex: 0 0 auto;
+  height: 34px;
+  width: 34px;
+}
+
+.theme-color-swatch > span.is-empty {
+  background:
+    linear-gradient(135deg, transparent 47%, rgba(100, 116, 139, 0.65) 48%, rgba(100, 116, 139, 0.65) 52%, transparent 53%),
+    var(--settings-control-bg) !important;
+}
+
+.theme-color-swatch div {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.theme-color-swatch small {
+  color: #64748b;
+}
+
+.theme-color-swatch strong {
+  overflow-wrap: anywhere;
+}
+
+:root[data-theme="dark"] .theme-color-swatch small {
+  color: #9ca3af;
+}
+
 .control-grid {
   display: grid;
   gap: 16px;
@@ -289,7 +345,6 @@ textarea {
 }
 
 .preview-stage {
-  --preview-image: none;
   --preview-fit: cover;
   --preview-position: center center;
   --preview-filter: none;
@@ -305,12 +360,10 @@ textarea {
   position: relative;
 }
 
-.preview-stage::before {
-  background-image: var(--preview-image);
-  background-position: var(--preview-position);
-  background-repeat: no-repeat;
-  background-size: var(--preview-fit);
-  content: "";
+.preview-image {
+  display: block;
+  height: calc(100% + (2 * var(--preview-inset)));
+  width: calc(100% + (2 * var(--preview-inset)));
   filter: var(--preview-filter);
   inset: calc(-1 * var(--preview-inset));
   opacity: 0;
@@ -318,11 +371,11 @@ textarea {
   transition: opacity 160ms ease;
 }
 
-.preview-stage.has-image::before {
+.preview-stage.has-image .preview-image {
   opacity: 1;
 }
 
-.preview-stage.is-disabled::before {
+.preview-stage.is-disabled .preview-image {
   opacity: 0;
 }
 
@@ -372,7 +425,8 @@ dd {
 
 @media (max-width: 860px) {
   .workspace,
-  .control-grid {
+  .control-grid,
+  .theme-color-grid {
     grid-template-columns: 1fr;
   }
 

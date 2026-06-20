@@ -142,7 +142,7 @@ def _inject_content(content: str) -> str:
         )
         matches = list(pattern.finditer(content))
         if len(matches) == 1:
-            return pattern.sub(block, content, count=1)
+            return pattern.sub(lambda _: block, content, count=1)
         content_without_blocks = pattern.sub("", content)
         return _insert_block_before_head_close(content_without_blocks, block)
 
@@ -207,11 +207,22 @@ def _build_bootstrap_script(config_url: str, theme_url: str) -> str:
     var CONFIG_URL = {config_url_json};
     var THEME_URL = {theme_url_json};
     var STYLE_ID = "astrbot-palette-theme";
+    var THEME_COLOR_STYLE_ID = "astrbot-palette-theme-colors";
     var ACTIVE_CLASS = "astrbot-palette-active";
     var DARK_THEME_BOOTSTRAP_KEY = "astrbot_palette_dark_theme_bootstrapped";
+    var THEME_COLOR_ACTIVE_KEY = "astrbot_palette_theme_colors_active";
+    var PREVIOUS_PRIMARY_KEY = "astrbot_palette_theme_previous_primary";
+    var PREVIOUS_SECONDARY_KEY = "astrbot_palette_theme_previous_secondary";
+    var PREVIOUS_PRIMARY_RGB_KEY = "astrbot_palette_theme_previous_primary_rgb";
+    var PREVIOUS_SECONDARY_RGB_KEY = "astrbot_palette_theme_previous_secondary_rgb";
+    var PREVIOUS_DARKPRIMARY_RGB_KEY = "astrbot_palette_theme_previous_darkprimary_rgb";
+    var PREVIOUS_DARKSECONDARY_RGB_KEY = "astrbot_palette_theme_previous_darksecondary_rgb";
     var lastToken = null;
     var lastBackgroundUrl = "";
     var currentObjectUrl = "";
+    var restoredThemeStyleActive = false;
+    var restoredThemePrimary = "";
+    var restoredThemeSecondary = "";
     var loading = false;
     var pendingRefresh = false;
 
@@ -279,6 +290,62 @@ def _build_bootstrap_script(config_url: str, theme_url: str) -> str:
       }}
     }}
 
+    function buildThemeColorCss(primaryRgb, secondaryRgb, darkPrimaryRgb, darkSecondaryRgb) {{
+      return [
+        ":root {{",
+        "  --v-theme-primary: " + primaryRgb + " !important;",
+        "  --v-theme-secondary: " + secondaryRgb + " !important;",
+        "  --v-theme-darkprimary: " + darkPrimaryRgb + " !important;",
+        "  --v-theme-darksecondary: " + darkSecondaryRgb + " !important;",
+        "}}",
+        ".v-theme--PurpleTheme, .v-theme--PurpleThemeDark {{",
+        "  --v-theme-primary: " + primaryRgb + " !important;",
+        "  --v-theme-secondary: " + secondaryRgb + " !important;",
+        "  --v-theme-darkprimary: " + darkPrimaryRgb + " !important;",
+        "  --v-theme-darksecondary: " + darkSecondaryRgb + " !important;",
+        "}}",
+      ].join("\\n");
+    }}
+
+    function ensureThemeColorRgbStyle(primaryRgb, secondaryRgb, darkPrimaryRgb, darkSecondaryRgb) {{
+      var style = document.getElementById(THEME_COLOR_STYLE_ID);
+      if (!style) {{
+        style = document.createElement("style");
+        style.id = THEME_COLOR_STYLE_ID;
+        style.type = "text/css";
+        document.head.appendChild(style);
+      }}
+      var css = buildThemeColorCss(
+        primaryRgb,
+        secondaryRgb,
+        darkPrimaryRgb || primaryRgb,
+        darkSecondaryRgb || secondaryRgb
+      );
+      if (style.textContent !== css) {{
+        style.textContent = css;
+      }}
+    }}
+
+    function ensureThemeColorStyle(primary, secondary) {{
+      var primaryRgb = hexToRgbTuple(primary);
+      var secondaryRgb = hexToRgbTuple(secondary);
+      if (!primaryRgb || !secondaryRgb) {{
+        removeThemeColorStyle();
+        return;
+      }}
+      ensureThemeColorRgbStyle(primaryRgb, secondaryRgb, primaryRgb, secondaryRgb);
+    }}
+
+    function removeThemeColorStyle() {{
+      var style = document.getElementById(THEME_COLOR_STYLE_ID);
+      if (style) {{
+        style.remove();
+      }}
+      restoredThemeStyleActive = false;
+      restoredThemePrimary = "";
+      restoredThemeSecondary = "";
+    }}
+
     function revokeObjectUrl() {{
       if (!currentObjectUrl) {{
         return;
@@ -308,6 +375,7 @@ def _build_bootstrap_script(config_url: str, theme_url: str) -> str:
       }});
       lastBackgroundUrl = "";
       revokeObjectUrl();
+      restoreThemeColors();
     }}
 
     function clampNumber(value, minimum, maximum, fallback) {{
@@ -320,6 +388,191 @@ def _build_bootstrap_script(config_url: str, theme_url: str) -> str:
 
     function normalizeFit(value) {{
       return ["cover", "contain", "auto"].indexOf(value) === -1 ? "cover" : value;
+    }}
+
+    function normalizeHexColor(value) {{
+      if (typeof value !== "string") {{
+        return "";
+      }}
+      var color = value.trim();
+      return /^#[0-9a-fA-F]{{6}}$/.test(color) ? color.toLowerCase() : "";
+    }}
+
+    function hexToRgbTuple(value) {{
+      var color = normalizeHexColor(value);
+      if (!color) {{
+        return "";
+      }}
+      return [
+        parseInt(color.slice(1, 3), 16),
+        parseInt(color.slice(3, 5), 16),
+        parseInt(color.slice(5, 7), 16),
+      ].join(", ");
+    }}
+
+    function getThemeVariableSource() {{
+      return document.querySelector(".v-theme--PurpleTheme, .v-theme--PurpleThemeDark") || document.documentElement;
+    }}
+
+    function normalizeRgbTuple(value) {{
+      if (typeof value !== "string") {{
+        return "";
+      }}
+      var parts = value.trim().split(",").map(function (part) {{
+        var number = Number(part.trim());
+        return Number.isFinite(number) ? Math.round(number) : NaN;
+      }});
+      if (parts.length !== 3 || parts.some(function (part) {{ return !Number.isFinite(part) || part < 0 || part > 255; }})) {{
+        return "";
+      }}
+      return parts.join(", ");
+    }}
+
+    function readThemeRgbVariable(name) {{
+      try {{
+        return normalizeRgbTuple(
+          window.getComputedStyle(getThemeVariableSource()).getPropertyValue(name)
+        );
+      }} catch (_) {{
+        return "";
+      }}
+    }}
+
+    function storePreviousThemeColors() {{
+      try {{
+        if (window.localStorage.getItem(THEME_COLOR_ACTIVE_KEY) === "1") {{
+          return;
+        }}
+        var currentPrimary = window.localStorage.getItem("themePrimary") || "";
+        var currentSecondary = window.localStorage.getItem("themeSecondary") || "";
+        window.localStorage.setItem(PREVIOUS_PRIMARY_KEY, currentPrimary);
+        window.localStorage.setItem(PREVIOUS_SECONDARY_KEY, currentSecondary);
+        window.localStorage.setItem(
+          PREVIOUS_PRIMARY_RGB_KEY,
+          readThemeRgbVariable("--v-theme-primary") || hexToRgbTuple(currentPrimary)
+        );
+        window.localStorage.setItem(
+          PREVIOUS_SECONDARY_RGB_KEY,
+          readThemeRgbVariable("--v-theme-secondary") || hexToRgbTuple(currentSecondary)
+        );
+        window.localStorage.setItem(
+          PREVIOUS_DARKPRIMARY_RGB_KEY,
+          readThemeRgbVariable("--v-theme-darkprimary") ||
+            readThemeRgbVariable("--v-theme-primary") ||
+            hexToRgbTuple(currentPrimary)
+        );
+        window.localStorage.setItem(
+          PREVIOUS_DARKSECONDARY_RGB_KEY,
+          readThemeRgbVariable("--v-theme-darksecondary") ||
+            readThemeRgbVariable("--v-theme-secondary") ||
+            hexToRgbTuple(currentSecondary)
+        );
+        window.localStorage.setItem(THEME_COLOR_ACTIVE_KEY, "1");
+      }} catch (_) {{
+      }}
+    }}
+
+    function applyThemeColors(config) {{
+      var primary = normalizeHexColor(config.theme_primary);
+      var secondary = normalizeHexColor(config.theme_secondary);
+      var shouldApply = Boolean(
+        config.enabled &&
+        config.auto_theme_enabled &&
+        config.background_image &&
+        primary &&
+        secondary
+      );
+      if (!shouldApply) {{
+        restoreThemeColors();
+        return;
+      }}
+      restoredThemeStyleActive = false;
+      restoredThemePrimary = "";
+      restoredThemeSecondary = "";
+      try {{
+        storePreviousThemeColors();
+        window.localStorage.setItem("themePrimary", primary);
+        window.localStorage.setItem("themeSecondary", secondary);
+      }} catch (_) {{
+      }}
+      ensureThemeColorStyle(primary, secondary);
+    }}
+
+    function restoreThemeColors() {{
+      try {{
+        if (window.localStorage.getItem(THEME_COLOR_ACTIVE_KEY) !== "1") {{
+          if (!restoredThemeStyleActive) {{
+            removeThemeColorStyle();
+          }}
+          return;
+        }}
+        var previousPrimary = window.localStorage.getItem(PREVIOUS_PRIMARY_KEY);
+        var previousSecondary = window.localStorage.getItem(PREVIOUS_SECONDARY_KEY);
+        var previousPrimaryRgb = normalizeRgbTuple(
+          window.localStorage.getItem(PREVIOUS_PRIMARY_RGB_KEY) || ""
+        );
+        var previousSecondaryRgb = normalizeRgbTuple(
+          window.localStorage.getItem(PREVIOUS_SECONDARY_RGB_KEY) || ""
+        );
+        var previousDarkPrimaryRgb = normalizeRgbTuple(
+          window.localStorage.getItem(PREVIOUS_DARKPRIMARY_RGB_KEY) || ""
+        );
+        var previousDarkSecondaryRgb = normalizeRgbTuple(
+          window.localStorage.getItem(PREVIOUS_DARKSECONDARY_RGB_KEY) || ""
+        );
+        if (previousPrimary) {{
+          window.localStorage.setItem("themePrimary", previousPrimary);
+        }} else {{
+          window.localStorage.removeItem("themePrimary");
+        }}
+        if (previousSecondary) {{
+          window.localStorage.setItem("themeSecondary", previousSecondary);
+        }} else {{
+          window.localStorage.removeItem("themeSecondary");
+        }}
+        if (previousPrimaryRgb && previousSecondaryRgb) {{
+          ensureThemeColorRgbStyle(
+            previousPrimaryRgb,
+            previousSecondaryRgb,
+            previousDarkPrimaryRgb || previousPrimaryRgb,
+            previousDarkSecondaryRgb || previousSecondaryRgb
+          );
+          restoredThemeStyleActive = true;
+          restoredThemePrimary = previousPrimary || "";
+          restoredThemeSecondary = previousSecondary || "";
+        }} else {{
+          removeThemeColorStyle();
+        }}
+        window.localStorage.removeItem(THEME_COLOR_ACTIVE_KEY);
+        window.localStorage.removeItem(PREVIOUS_PRIMARY_KEY);
+        window.localStorage.removeItem(PREVIOUS_SECONDARY_KEY);
+        window.localStorage.removeItem(PREVIOUS_PRIMARY_RGB_KEY);
+        window.localStorage.removeItem(PREVIOUS_SECONDARY_RGB_KEY);
+        window.localStorage.removeItem(PREVIOUS_DARKPRIMARY_RGB_KEY);
+        window.localStorage.removeItem(PREVIOUS_DARKSECONDARY_RGB_KEY);
+      }} catch (_) {{
+        removeThemeColorStyle();
+      }}
+    }}
+
+    function dropRestoredThemeStyleIfUserChangedColors() {{
+      if (!restoredThemeStyleActive) {{
+        return;
+      }}
+      try {{
+        if (window.localStorage.getItem(THEME_COLOR_ACTIVE_KEY) === "1") {{
+          return;
+        }}
+        var currentPrimary = window.localStorage.getItem("themePrimary") || "";
+        var currentSecondary = window.localStorage.getItem("themeSecondary") || "";
+        if (
+          currentPrimary !== restoredThemePrimary ||
+          currentSecondary !== restoredThemeSecondary
+        ) {{
+          removeThemeColorStyle();
+        }}
+      }} catch (_) {{
+      }}
     }}
 
     function applyConfig(config, imageUrl) {{
@@ -339,6 +592,7 @@ def _build_bootstrap_script(config_url: str, theme_url: str) -> str:
       root.style.setProperty("--astrbot-palette-background-saturation", String(clampNumber(config.background_saturation, 0, 2, 1)));
       root.setAttribute("data-astrbot-palette-text-mode", config.text_enhancement_mode || "soft_shadow");
       root.classList.toggle(ACTIVE_CLASS, Boolean(config.enabled && imageUrl));
+      applyThemeColors(config);
     }}
 
     async function fetchText(url, token) {{
@@ -454,6 +708,7 @@ def _build_bootstrap_script(config_url: str, theme_url: str) -> str:
     window.addEventListener("beforeunload", revokeObjectUrl);
 
     window.setInterval(function () {{
+      dropRestoredThemeStyleIfUserChangedColors();
       var token = getToken();
       if (token !== lastToken) {{
         refreshPalette();

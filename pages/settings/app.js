@@ -5,7 +5,9 @@ const statusText = document.getElementById("status-text");
 const statusList = document.getElementById("status-list");
 const refreshButton = document.getElementById("refresh");
 const saveButton = document.getElementById("save");
+const recalculateThemeButton = document.getElementById("recalculate-theme");
 const enabledInput = document.getElementById("enabled");
+const autoThemeInput = document.getElementById("auto-theme-enabled");
 const fileInput = document.getElementById("background-file");
 const backgroundName = document.getElementById("background-name");
 const fitInput = document.getElementById("background-fit");
@@ -29,6 +31,11 @@ const contrastValue = document.getElementById("contrast-value");
 const saturationValue = document.getElementById("saturation-value");
 const advancedCssInput = document.getElementById("advanced-css");
 const preview = document.getElementById("preview");
+const previewImage = document.getElementById("preview-image");
+const themePrimarySwatch = document.getElementById("theme-primary-swatch");
+const themeSecondarySwatch = document.getElementById("theme-secondary-swatch");
+const themePrimaryValue = document.getElementById("theme-primary-value");
+const themeSecondaryValue = document.getElementById("theme-secondary-value");
 
 let currentConfig = null;
 let localPreviewUrl = "";
@@ -53,6 +60,7 @@ function clearLocalPreview() {
 function setBusy(isBusy) {
   saveButton.disabled = isBusy;
   refreshButton.disabled = isBusy;
+  recalculateThemeButton.disabled = isBusy || !currentConfig?.background_image;
   fileInput.disabled = isBusy;
 }
 
@@ -115,6 +123,9 @@ function configFromForm() {
     background_brightness: numberFromInput(brightnessInput, 1),
     background_contrast: numberFromInput(contrastInput, 1),
     background_saturation: numberFromInput(saturationInput, 1),
+    auto_theme_enabled: autoThemeInput.checked,
+    theme_primary: currentConfig?.theme_primary || "",
+    theme_secondary: currentConfig?.theme_secondary || "",
     advanced_css: advancedCssInput.value,
   };
 }
@@ -133,10 +144,13 @@ function applyForm(config) {
   brightnessInput.value = String(config.background_brightness ?? 1);
   contrastInput.value = String(config.background_contrast ?? 1);
   saturationInput.value = String(config.background_saturation ?? 1);
+  autoThemeInput.checked = config.auto_theme_enabled !== false;
   advancedCssInput.value = config.advanced_css || "";
   backgroundName.textContent = config.background_image || "未设置";
+  syncThemeColorPreview(config);
   syncRangeLabels();
   updatePreview();
+  recalculateThemeButton.disabled = !currentConfig?.background_image;
 }
 
 function syncRangeLabels() {
@@ -169,10 +183,10 @@ function updatePreview() {
   );
   preview.classList.toggle("is-disabled", !config.enabled);
   preview.classList.toggle("has-image", Boolean(imageUrl));
-  preview.style.setProperty(
-    "--preview-image",
-    imageUrl ? `url("${imageUrl}")` : "none",
-  );
+  previewImage.src = imageUrl || "";
+  previewImage.style.objectFit = config.background_fit;
+  previewImage.style.objectPosition = config.background_position;
+  previewImage.alt = imageUrl ? "当前背景预览" : "";
 }
 
 function buildBackgroundFilter(config) {
@@ -232,9 +246,33 @@ function renderStatus(status, config) {
   renderList(statusList, [
     ["插件", `${status.plugin?.name || "unknown"} ${status.plugin?.version || ""}`],
     ["美化", config.enabled ? "已启用" : "未启用"],
+    ["主题色", config.auto_theme_enabled ? "自动同步" : "未同步"],
+    ["主色", config.theme_primary || "未生成"],
+    ["辅色", config.theme_secondary || "未生成"],
     ["注入", status.injection?.message || "未知"],
     ["图片", config.background_image || "未设置"],
   ]);
+}
+
+function syncThemeColorPreview(config) {
+  const primary = normalizeHexColor(config.theme_primary);
+  const secondary = normalizeHexColor(config.theme_secondary);
+  setColorSwatch(themePrimarySwatch, themePrimaryValue, primary);
+  setColorSwatch(themeSecondarySwatch, themeSecondaryValue, secondary);
+}
+
+function setColorSwatch(swatch, label, color) {
+  swatch.style.background = color || "transparent";
+  swatch.classList.toggle("is-empty", !color);
+  label.textContent = color || "未生成";
+}
+
+function normalizeHexColor(value) {
+  if (typeof value !== "string") {
+    return "";
+  }
+  const color = value.trim();
+  return /^#[0-9a-fA-F]{6}$/.test(color) ? color.toLowerCase() : "";
 }
 
 async function loadPaletteState() {
@@ -316,12 +354,35 @@ async function uploadBackground(file) {
   }
 }
 
+async function recalculateThemeColors() {
+  if (!currentConfig?.background_image) {
+    setStatus("请先上传背景图片", "danger");
+    return;
+  }
+  setBusy(true);
+  setStatus("正在重新读取壁纸主题色");
+  try {
+    const response = await bridge.apiPost("theme-colors/recalculate", {});
+    applyForm(response.config);
+    notifyPaletteRefresh();
+    setStatus(response.message || "主题色已重新读取", "success");
+  } catch (error) {
+    setStatus(error?.message || "主题色读取失败", "danger");
+  } finally {
+    setBusy(false);
+  }
+}
+
 refreshButton.addEventListener("click", () => {
   void loadPaletteState();
 });
 
 saveButton.addEventListener("click", () => {
   void saveConfig();
+});
+
+recalculateThemeButton.addEventListener("click", () => {
+  void recalculateThemeColors();
 });
 
 fileInput.addEventListener("change", () => {

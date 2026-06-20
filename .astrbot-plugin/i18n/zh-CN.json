@@ -1,6 +1,6 @@
 {
   "name": "AstrBot调色盘",
-  "description": "AstrBot WebUI 美化插件，支持运行时背景图、透明界面和可读性增强。",
+  "description": "AstrBot WebUI 美化插件，支持运行时背景图、透明界面、可读性增强和壁纸主题色联动。",
   "pages": {
     "settings": "设置"
   }

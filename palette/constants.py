@@ -2,9 +2,9 @@ from __future__ import annotations
 
 PLUGIN_NAME = "astrbot_plugin_palette"
 DISPLAY_NAME = "AstrBot调色盘"
-VERSION = "0.1.0"
+VERSION = "0.2.0"
 AUTHOR = "C₂₂H₂₅NO₆"
-DESCRIPTION = "AstrBot WebUI 美化插件，支持运行时背景图、透明界面和可读性增强。"
+DESCRIPTION = "AstrBot WebUI 美化插件，支持运行时背景图、透明界面、可读性增强和壁纸主题色联动。"
 ROUTE_PREFIX = f"/{PLUGIN_NAME}"
 
 INJECTION_START_MARKER = f"<!-- {PLUGIN_NAME}:start -->"

@@ -176,6 +176,40 @@
             </label>
           </section>
 
+          <section class="panel-block theme-color-panel">
+            <div class="section-title">
+              <div>
+                <h2>主题色联动</h2>
+                <p>自动读取当前壁纸主题色，并同步 AstrBot 主色与辅色。</p>
+              </div>
+              <label class="switch">
+                <input id="auto-theme-enabled" name="auto_theme_enabled" type="checkbox" />
+                <span>自动</span>
+              </label>
+            </div>
+
+            <div class="theme-color-grid">
+              <div class="theme-color-swatch">
+                <span id="theme-primary-swatch"></span>
+                <div>
+                  <small>主色</small>
+                  <strong id="theme-primary-value">未生成</strong>
+                </div>
+              </div>
+              <div class="theme-color-swatch">
+                <span id="theme-secondary-swatch"></span>
+                <div>
+                  <small>辅色</small>
+                  <strong id="theme-secondary-value">未生成</strong>
+                </div>
+              </div>
+            </div>
+
+            <button id="recalculate-theme" class="ghost-button" type="button">
+              重新读取壁纸主题色
+            </button>
+          </section>
+
           <section class="panel-block">
             <label class="css-editor-label" for="advanced-css">
               <span>
@@ -193,6 +227,7 @@
 
         <aside class="preview-panel">
           <div id="preview" class="preview-stage">
+            <img id="preview-image" class="preview-image" alt="" />
             <div class="preview-overlay"></div>
             <div class="preview-empty">上传背景后，这里会显示当前使用的壁纸。</div>
           </div>
