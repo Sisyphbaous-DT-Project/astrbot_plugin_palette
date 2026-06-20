@@ -147,6 +147,8 @@ def build_theme_css(config: dict[str, Any]) -> str:
             "",
             _extension_dialog_surface_css(),
             "",
+            _astrbot_update_dialog_surface_css(),
+            "",
             _readability_css(text_effect, icon_effect),
             "",
             sanitize_advanced_css(config.get("advanced_css")),
@@ -822,6 +824,188 @@ def _extension_dialog_surface_css() -> str:
             "",
             "html.astrbot-palette-active .v-overlay-container .v-dialog .v-card:has(.v-card-title .text-h2.pa-2) .markdown-body hr {",
             f"  background: {border} !important;",
+            "}",
+        ]
+    )
+
+
+def _astrbot_update_dialog_surface_css() -> str:
+    surface = "rgba(var(--v-theme-surface), var(--astrbot-palette-surface-opacity, 0))"
+    neutral_soft = (
+        "rgba(var(--v-theme-on-surface), "
+        "calc(var(--astrbot-palette-surface-opacity, 0) * 0.08))"
+    )
+    primary_soft = (
+        "rgba(var(--v-theme-primary), "
+        "calc(var(--astrbot-palette-surface-opacity, 0) * 0.12))"
+    )
+    border = (
+        "rgba(var(--v-theme-on-surface), "
+        "calc(var(--astrbot-palette-surface-opacity, 0) * 0.18))"
+    )
+    update_card = (
+        "html.astrbot-palette-active .v-overlay-container .v-dialog "
+        ".v-card:has(.update-summary)"
+    )
+    release_card = (
+        "html.astrbot-palette-active .v-overlay-container .v-dialog "
+        ".v-card:has(> .v-card-title.text-h3.pa-4)"
+        ":has(> .v-card-text[style*=\"max-height: 400px\"])"
+    )
+    changelog_card = (
+        "html.astrbot-palette-active .v-overlay-container .v-dialog "
+        ".v-card:has([style*=\"max-height: 70vh\"])"
+    )
+
+    solid_surfaces = [
+        update_card,
+        release_card,
+        changelog_card,
+        f"{update_card} > .v-card-title",
+        f"{update_card} > .v-card-text",
+        f"{update_card} > .v-card-actions",
+        f"{update_card} .v-container",
+        f"{update_card} .update-summary",
+        f"{update_card} .update-progress-panel",
+        f"{update_card} .dashboard-update-banner",
+        f"{update_card} .release-message-preview",
+        f"{update_card} .advanced-update-settings",
+        f"{update_card} .v-data-table",
+        f"{update_card} .v-table",
+        f"{update_card} .v-table__wrapper",
+        f"{update_card} .v-table__wrapper > table",
+        f"{update_card} .v-table__wrapper > table > thead",
+        f"{update_card} .v-table__wrapper > table > tbody",
+        f"{update_card} .v-table__wrapper > table > tbody > tr",
+        f"{update_card} .v-table__wrapper > table > tbody > tr > td",
+        f"{update_card} .v-table__wrapper > table > thead > tr > th",
+        f"{update_card} .v-data-table-footer",
+        f"{release_card} > .v-card-title",
+        f"{release_card} > .v-card-text",
+        f"{release_card} > .v-card-actions",
+        f"{release_card} .markdown-content",
+        f"{release_card} .code-block-container",
+        f"{release_card} .code-block-shell-content",
+        f"{release_card} .code-block-content",
+        f"{release_card} .table-node",
+        f"{release_card} .mermaid-block-container",
+        f"{release_card} .d2-block-container",
+        f"{release_card} .infographic-block-container",
+        f"{changelog_card} > .v-card-title",
+        f"{changelog_card} > .v-card-text",
+        f"{changelog_card} > .v-card-actions",
+        f"{changelog_card} .changelog-content",
+        f"{changelog_card} .markdown-content",
+        f"{changelog_card} .code-block-container",
+        f"{changelog_card} .code-block-shell-content",
+        f"{changelog_card} .code-block-content",
+        f"{changelog_card} .table-node",
+        f"{changelog_card} .mermaid-block-container",
+        f"{changelog_card} .d2-block-container",
+        f"{changelog_card} .infographic-block-container",
+        f"{changelog_card} [style*=\"max-height: 70vh\"]",
+    ]
+    soft_surfaces = [
+        f"{update_card} .release-message-preview .markdown-content",
+        f"{update_card} .release-message-preview .code-block-header",
+        f"{update_card} .v-data-table .v-data-table__tr:hover",
+        f"{update_card} .v-data-table tr:hover",
+        f"{update_card} .v-field",
+        f"{release_card} .markdown-content pre",
+        f"{release_card} .markdown-content code",
+        f"{release_card} .markdown-content table th",
+        f"{release_card} .markdown-content table tr:nth-child(2n)",
+        f"{release_card} .code-block-header",
+        f"{release_card} .code-block-container pre",
+        f"{release_card} .code-block-container code",
+        f"{release_card} .table-node table th",
+        f"{release_card} .table-node table tr:nth-child(2n)",
+        f"{changelog_card} .v-field",
+        f"{changelog_card} .markdown-content pre",
+        f"{changelog_card} .markdown-content code",
+        f"{changelog_card} .markdown-content table th",
+        f"{changelog_card} .markdown-content table tr:nth-child(2n)",
+        f"{changelog_card} .code-block-header",
+        f"{changelog_card} .code-block-container pre",
+        f"{changelog_card} .code-block-container code",
+        f"{changelog_card} .table-node table th",
+        f"{changelog_card} .table-node table tr:nth-child(2n)",
+    ]
+    bordered = [
+        f"{update_card} .update-progress-panel",
+        f"{update_card} .dashboard-update-banner",
+        f"{update_card} .release-message-preview",
+        f"{update_card} .v-table",
+        f"{update_card} .v-table__wrapper",
+        f"{update_card} .v-table__wrapper > table > thead > tr > th",
+        f"{update_card} .v-table__wrapper > table > tbody > tr > td",
+        f"{release_card} .markdown-content table",
+        f"{release_card} .markdown-content table th",
+        f"{release_card} .markdown-content table td",
+        f"{release_card} .markdown-content pre",
+        f"{release_card} .markdown-content blockquote",
+        f"{release_card} .code-block-container",
+        f"{release_card} .code-block-header",
+        f"{release_card} .table-node",
+        f"{release_card} .mermaid-block-container",
+        f"{release_card} .d2-block-container",
+        f"{release_card} .infographic-block-container",
+        f"{changelog_card} .markdown-content table",
+        f"{changelog_card} .markdown-content table th",
+        f"{changelog_card} .markdown-content table td",
+        f"{changelog_card} .markdown-content pre",
+        f"{changelog_card} .markdown-content blockquote",
+        f"{changelog_card} .code-block-container",
+        f"{changelog_card} .code-block-header",
+        f"{changelog_card} .table-node",
+        f"{changelog_card} .mermaid-block-container",
+        f"{changelog_card} .d2-block-container",
+        f"{changelog_card} .infographic-block-container",
+    ]
+
+    return "\n".join(
+        [
+            ",\n".join(solid_surfaces)
+            + " {\n"
+            f"  background: {surface} !important;\n"
+            "  box-shadow: none !important;\n"
+            "  backdrop-filter: none !important;\n"
+            "}",
+            "",
+            ",\n".join(soft_surfaces)
+            + " {\n"
+            f"  background: {neutral_soft} !important;\n"
+            "  box-shadow: none !important;\n"
+            "}",
+            "",
+            ",\n".join(bordered)
+            + " {\n"
+            f"  border-color: {border} !important;\n"
+            "}",
+            "",
+            f"{update_card} .release-message-preview::after,"
+            f"\n{update_card} .update-progress-panel::before "
+            "{\n"
+            "  background: transparent !important;\n"
+            "  opacity: 0 !important;\n"
+            "}",
+            "",
+            f"{update_card} .advanced-settings-toggle,"
+            f"\n{update_card} .v-btn:not(.bg-primary):not(.bg-secondary):not(.bg-success):not(.bg-warning):not(.bg-error):not(.bg-info),"
+            f"\n{changelog_card} .v-btn:not(.bg-primary):not(.bg-secondary):not(.bg-success):not(.bg-warning):not(.bg-error):not(.bg-info),"
+            f"\n{release_card} .v-btn:not(.bg-primary):not(.bg-secondary):not(.bg-success):not(.bg-warning):not(.bg-error):not(.bg-info) "
+            "{\n"
+            f"  background: {primary_soft} !important;\n"
+            "  box-shadow: none !important;\n"
+            f"  border-color: {border} !important;\n"
+            "}",
+            "",
+            f"{update_card} .v-alert,"
+            f"\n{update_card} .v-chip,"
+            f"\n{changelog_card} .v-alert,"
+            f"\n{changelog_card} .v-chip "
+            "{\n"
+            "  text-shadow: none !important;\n"
             "}",
         ]
     )
