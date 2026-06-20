@@ -196,6 +196,10 @@ git diff --check
 
 如果要在本地 AstrBot 中测试，建议复制插件目录到 `data/plugins/astrbot_plugin_palette`，不要使用软链接或 bind mount。
 
+## 更新日志
+
+完整更新日志见 [CHANGELOG.md](CHANGELOG.md)。版本化记录保存在 [changelogs](changelogs) 目录。
+
 ## 版本计划
 
 `0.1.0` 已提供背景图上传、运行时注入、透明化和可读性增强。
