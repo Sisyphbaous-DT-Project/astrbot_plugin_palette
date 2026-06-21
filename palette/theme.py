@@ -138,6 +138,10 @@ def build_theme_css(config: dict[str, Any]) -> str:
             "",
             _surface_css(),
             "",
+            _top_header_css(),
+            "",
+            _tabs_readability_css(),
+            "",
             _dashboard_shell_css(),
             "",
             _console_surface_css(),
@@ -175,6 +179,111 @@ def sanitize_advanced_css(value: Any) -> str:
     if _EXTERNAL_URL.search(css):
         return "/* AstrBot调色盘：已拦截外链 url()。 */"
     return css
+
+
+def _top_header_css() -> str:
+    return "\n".join(
+        [
+            "html.astrbot-palette-active #app .top-header,",
+            "html.astrbot-palette-active #app .v-app-bar.top-header,",
+            "html.astrbot-palette-active #app .v-app-bar.v-toolbar.top-header {",
+            "  background: transparent !important;",
+            "  border-bottom: 0 !important;",
+            "  box-shadow: none !important;",
+            "  outline: 0 !important;",
+            "}",
+            "",
+            "html.astrbot-palette-active #app .top-header::before,",
+            "html.astrbot-palette-active #app .top-header::after,",
+            "html.astrbot-palette-active #app .v-app-bar.top-header::before,",
+            "html.astrbot-palette-active #app .v-app-bar.top-header::after {",
+            "  background: transparent !important;",
+            "  border: 0 !important;",
+            "  box-shadow: none !important;",
+            "}",
+            "",
+            "html.astrbot-palette-active #app .top-header .v-toolbar__content {",
+            "  border-bottom: 0 !important;",
+            "  box-shadow: none !important;",
+            "  outline: 0 !important;",
+            "}",
+        ]
+    )
+
+
+def _tabs_readability_css() -> str:
+    tab_shadow = (
+        "0 1px 4px rgba(0, 0, 0, 0.44), "
+        "0 -1px 4px rgba(255, 255, 255, 0.18)"
+    )
+    primary_soft = "rgba(var(--v-theme-primary), 0.12)"
+    primary_border = "rgba(var(--v-theme-primary), 0.58)"
+    return "\n".join(
+        [
+            "html.astrbot-palette-active #app .v-main .v-tabs,",
+            "html.astrbot-palette-active #app .v-main .v-tabs.v-slide-group,",
+            "html.astrbot-palette-active #app .v-main .v-tabs .v-slide-group,",
+            "html.astrbot-palette-active .v-overlay-container .v-tabs,",
+            "html.astrbot-palette-active .v-overlay-container .v-tabs.v-slide-group,",
+            "html.astrbot-palette-active .v-overlay-container .v-tabs .v-slide-group {",
+            "  background: transparent !important;",
+            "  box-shadow: none !important;",
+            "}",
+            "",
+            "html.astrbot-palette-active #app .v-main .v-tabs .v-btn.v-tab,",
+            "html.astrbot-palette-active #app .v-main .v-tab,",
+            "html.astrbot-palette-active .v-overlay-container .v-tabs .v-btn.v-tab,",
+            "html.astrbot-palette-active .v-overlay-container .v-tab {",
+            "  background: transparent !important;",
+            "  border: 1px solid transparent !important;",
+            "  border-radius: 0 !important;",
+            "  box-shadow: none !important;",
+            "  color: rgb(var(--v-theme-on-surface)) !important;",
+            "  margin-inline: 2px !important;",
+            "  opacity: 0.88 !important;",
+            f"  text-shadow: {tab_shadow} !important;",
+            "}",
+            "",
+            "html.astrbot-palette-active #app .v-main .v-tabs .v-btn.v-tab:hover,",
+            "html.astrbot-palette-active #app .v-main .v-tab:hover,",
+            "html.astrbot-palette-active .v-overlay-container .v-tabs .v-btn.v-tab:hover,",
+            "html.astrbot-palette-active .v-overlay-container .v-tab:hover {",
+            "  background: transparent !important;",
+            "  border-color: transparent !important;",
+            f"  border-bottom-color: {primary_border} !important;",
+            "  color: rgb(var(--v-theme-primary)) !important;",
+            "  opacity: 1 !important;",
+            "}",
+            "",
+            "html.astrbot-palette-active #app .v-main .v-tabs .v-btn.v-tab.v-tab--selected,",
+            "html.astrbot-palette-active #app .v-main .v-tab.v-tab--selected,",
+            "html.astrbot-palette-active #app .v-main .v-tabs .v-btn.v-tab.v-btn--active,",
+            "html.astrbot-palette-active #app .v-main .v-tab.v-btn--active,",
+            "html.astrbot-palette-active #app .v-main .v-tabs .v-btn.v-tab.v-slide-group-item--active,",
+            "html.astrbot-palette-active #app .v-main .v-tab.v-slide-group-item--active,",
+            "html.astrbot-palette-active .v-overlay-container .v-tabs .v-btn.v-tab.v-tab--selected,",
+            "html.astrbot-palette-active .v-overlay-container .v-tab.v-tab--selected,",
+            "html.astrbot-palette-active .v-overlay-container .v-tabs .v-btn.v-tab.v-btn--active,",
+            "html.astrbot-palette-active .v-overlay-container .v-tab.v-btn--active,",
+            "html.astrbot-palette-active .v-overlay-container .v-tabs .v-btn.v-tab.v-slide-group-item--active,",
+            "html.astrbot-palette-active .v-overlay-container .v-tab.v-slide-group-item--active {",
+            "  background: linear-gradient(to bottom, transparent calc(100% - 3px), "
+            f"{primary_soft} calc(100% - 3px)) !important;",
+            "  border-color: transparent !important;",
+            f"  border-bottom-color: {primary_border} !important;",
+            "  color: rgb(var(--v-theme-primary)) !important;",
+            "  opacity: 1 !important;",
+            "}",
+            "",
+            "html.astrbot-palette-active #app .v-main .v-tab__slider,",
+            "html.astrbot-palette-active .v-overlay-container .v-tab__slider {",
+            "  background: rgb(var(--v-theme-primary)) !important;",
+            "  border-radius: 999px !important;",
+            "  box-shadow: 0 0 8px rgba(var(--v-theme-primary), 0.45) !important;",
+            "  height: 3px !important;",
+            "}",
+        ]
+    )
 
 
 def _surface_css() -> str:

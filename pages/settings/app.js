@@ -1,3 +1,5 @@
+import { initLiquidGlass } from "./liquid-glass.js";
+
 const bridge = window.AstrBotPluginPage;
 
 const form = document.getElementById("settings-form");
@@ -32,12 +34,15 @@ const brightnessValue = document.getElementById("brightness-value");
 const contrastValue = document.getElementById("contrast-value");
 const saturationValue = document.getElementById("saturation-value");
 const advancedCssInput = document.getElementById("advanced-css");
-const preview = document.getElementById("preview");
-const previewImage = document.getElementById("preview-image");
+const effectPreviews = Array.from(document.querySelectorAll(".effect-preview"));
 const themePrimarySwatch = document.getElementById("theme-primary-swatch");
 const themeSecondarySwatch = document.getElementById("theme-secondary-swatch");
 const themePrimaryValue = document.getElementById("theme-primary-value");
 const themeSecondaryValue = document.getElementById("theme-secondary-value");
+const tabButtons = Array.from(document.querySelectorAll("[data-tab]"));
+const tabPanels = Array.from(document.querySelectorAll("[data-tab-panel]"));
+const tabbar = document.querySelector(".tabbar");
+const tabbarGlider = document.createElement("span");
 
 let currentConfig = null;
 let latestStatus = null;
@@ -46,6 +51,9 @@ let remotePreviewDataUrl = "";
 let pendingDeleteFilename = "";
 let pendingDeleteTimer = 0;
 const previewCache = new Map();
+const customSelects = new Map();
+let customSelectListenersReady = false;
+const liquidGlass = initLiquidGlass();
 
 function applyThemeFromContext(context) {
   const fallbackTheme = new URLSearchParams(window.location.search).get("theme");
@@ -53,6 +61,353 @@ function applyThemeFromContext(context) {
     ? context.isDark
     : fallbackTheme === "dark";
   document.documentElement.dataset.theme = isDark ? "dark" : "light";
+}
+
+function activateTab(tabName, focusButton = false) {
+  const targetButton = tabButtons.find((button) => button.dataset.tab === tabName);
+  const targetPanel = tabPanels.find((panel) => panel.dataset.tabPanel === tabName);
+  if (!targetButton || !targetPanel) {
+    return;
+  }
+
+  tabButtons.forEach((button) => {
+    const isActive = button === targetButton;
+    button.classList.toggle("is-active", isActive);
+    button.setAttribute("aria-selected", String(isActive));
+    button.tabIndex = isActive ? 0 : -1;
+  });
+
+  tabPanels.forEach((panel) => {
+    const isActive = panel === targetPanel;
+    panel.classList.toggle("is-active", isActive);
+    panel.hidden = !isActive;
+  });
+
+  customSelects.forEach((_, select) => closeCustomSelect(select));
+  updateTabGlider();
+  window.requestAnimationFrame(() => liquidGlass.refreshTargets());
+
+  if (tabName === "gallery") {
+    updatePreview();
+  }
+
+  if (focusButton) {
+    targetButton.focus();
+  }
+}
+
+function initTabs() {
+  tabbarGlider.className = "tabbar-glider";
+  tabbarGlider.setAttribute("aria-hidden", "true");
+  tabbar?.prepend(tabbarGlider);
+
+  tabButtons.forEach((button) => {
+    button.addEventListener("click", () => {
+      activateTab(button.dataset.tab || "gallery");
+    });
+
+    button.addEventListener("keydown", (event) => {
+      if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) {
+        return;
+      }
+      event.preventDefault();
+
+      const currentIndex = tabButtons.indexOf(button);
+      let nextIndex = currentIndex;
+      if (event.key === "Home") {
+        nextIndex = 0;
+      } else if (event.key === "End") {
+        nextIndex = tabButtons.length - 1;
+      } else {
+        const direction = event.key === "ArrowRight" ? 1 : -1;
+        nextIndex = (currentIndex + direction + tabButtons.length) % tabButtons.length;
+      }
+
+      activateTab(tabButtons[nextIndex]?.dataset.tab || "gallery", true);
+    });
+  });
+
+  const activeButton = tabButtons.find((button) => {
+    return button.classList.contains("is-active") || button.getAttribute("aria-selected") === "true";
+  });
+  activateTab(activeButton?.dataset.tab || "gallery");
+  window.addEventListener("resize", updateTabGlider, { passive: true });
+}
+
+function updateTabGlider() {
+  const activeButton = tabButtons.find((button) => button.classList.contains("is-active"));
+  if (!activeButton || !tabbar) {
+    return;
+  }
+  const tabbarRect = tabbar.getBoundingClientRect();
+  const buttonRect = activeButton.getBoundingClientRect();
+  const x = buttonRect.left - tabbarRect.left;
+  const y = buttonRect.top - tabbarRect.top;
+  tabbar.style.setProperty("--tabbar-glider-x", `${x}px`);
+  tabbar.style.setProperty("--tabbar-glider-y", `${y}px`);
+  tabbar.style.setProperty("--tabbar-glider-w", `${buttonRect.width}px`);
+  tabbar.style.setProperty("--tabbar-glider-h", `${buttonRect.height}px`);
+}
+
+function initCustomSelects(selects) {
+  selects.filter(Boolean).forEach((select) => {
+    if (customSelects.has(select)) {
+      return;
+    }
+
+    select.classList.add("native-select-hidden");
+    select.tabIndex = -1;
+    select.setAttribute("aria-hidden", "true");
+
+    const wrapper = document.createElement("div");
+    wrapper.className = "custom-select";
+
+    const trigger = document.createElement("button");
+    trigger.className = "custom-select-trigger";
+    trigger.type = "button";
+    const label = getSelectLabel(select);
+    trigger.setAttribute("aria-label", label);
+    trigger.setAttribute("aria-controls", `${select.id}-custom-listbox`);
+    trigger.setAttribute("aria-haspopup", "listbox");
+    trigger.setAttribute("aria-expanded", "false");
+
+    const value = document.createElement("span");
+    value.className = "custom-select-value";
+    trigger.append(value);
+
+    const menu = document.createElement("div");
+    menu.className = "custom-select-menu";
+    menu.id = `${select.id}-custom-listbox`;
+    menu.hidden = true;
+    menu.role = "listbox";
+    menu.tabIndex = -1;
+
+    Array.from(select.options).forEach((option) => {
+      const item = document.createElement("button");
+      item.className = "custom-select-option";
+      item.type = "button";
+      item.role = "option";
+      item.dataset.value = option.value;
+      item.textContent = option.textContent || option.value;
+      menu.append(item);
+    });
+
+    wrapper.append(trigger, menu);
+    select.after(wrapper);
+    customSelects.set(select, { select, wrapper, trigger, value, menu, label });
+    liquidGlass.refreshTargets();
+
+    trigger.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      toggleCustomSelect(select);
+    });
+
+    trigger.addEventListener("keydown", (event) => {
+      if (["ArrowDown", "ArrowUp", "Enter", " "].includes(event.key)) {
+        event.preventDefault();
+        openCustomSelect(select, event.key === "ArrowUp" ? "last" : "selected");
+      }
+    });
+
+    menu.addEventListener("click", (event) => {
+      const option = event.target.closest(".custom-select-option");
+      if (!option || !menu.contains(option)) {
+        return;
+      }
+      event.preventDefault();
+      chooseCustomSelectValue(select, option.dataset.value || "");
+    });
+
+    menu.addEventListener("keydown", (event) => {
+      handleCustomSelectMenuKeydown(select, event);
+    });
+
+    wrapper.addEventListener("focusout", () => {
+      window.setTimeout(() => {
+        if (!wrapper.contains(document.activeElement)) {
+          closeCustomSelect(select);
+        }
+      }, 0);
+    });
+
+    select.addEventListener("input", () => {
+      syncCustomSelect(select);
+    });
+    select.addEventListener("change", () => {
+      syncCustomSelect(select);
+    });
+
+    syncCustomSelect(select);
+  });
+
+  if (!customSelectListenersReady) {
+    document.addEventListener("click", (event) => {
+      customSelects.forEach((state, select) => {
+        if (!state.wrapper.contains(event.target)) {
+          closeCustomSelect(select);
+        }
+      });
+    });
+
+    document.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") {
+        customSelects.forEach((_, select) => closeCustomSelect(select));
+      }
+    });
+
+    customSelectListenersReady = true;
+  }
+}
+
+function getSelectLabel(select) {
+  const labelText = select
+    .closest("label")
+    ?.querySelector("span")
+    ?.textContent
+    ?.replace(/\s+/g, " ")
+    .trim();
+  return labelText || select.name || select.id || "选项";
+}
+
+function toggleCustomSelect(select) {
+  const state = customSelects.get(select);
+  if (!state) {
+    return;
+  }
+  if (state.wrapper.classList.contains("is-open")) {
+    closeCustomSelect(select);
+    return;
+  }
+  openCustomSelect(select, "selected");
+}
+
+function openCustomSelect(select, focusMode = "selected") {
+  const state = customSelects.get(select);
+  if (!state) {
+    return;
+  }
+
+  customSelects.forEach((_, otherSelect) => {
+    if (otherSelect !== select) {
+      closeCustomSelect(otherSelect);
+    }
+  });
+
+  state.wrapper.classList.add("is-open");
+  state.wrapper.closest("label")?.classList.add("is-select-open");
+  state.wrapper.closest(".panel-block")?.classList.add("has-open-select");
+  state.trigger.setAttribute("aria-expanded", "true");
+  state.menu.hidden = false;
+
+  const options = getCustomSelectOptions(state);
+  const selected = options.find((option) => option.dataset.value === select.value);
+  const target = focusMode === "last" ? options.at(-1) : selected || options[0];
+  window.requestAnimationFrame(() => {
+    target?.focus();
+  });
+}
+
+function closeCustomSelect(select) {
+  const state = customSelects.get(select);
+  if (!state) {
+    return;
+  }
+  state.wrapper.classList.remove("is-open");
+  state.wrapper.closest("label")?.classList.remove("is-select-open");
+  state.wrapper.closest(".panel-block")?.classList.remove("has-open-select");
+  state.trigger.setAttribute("aria-expanded", "false");
+  state.menu.hidden = true;
+}
+
+function chooseCustomSelectValue(select, value) {
+  if (select.value !== value) {
+    select.value = value;
+    select.dispatchEvent(new Event("input", { bubbles: true }));
+    select.dispatchEvent(new Event("change", { bubbles: true }));
+  }
+  syncCustomSelect(select);
+  closeCustomSelect(select);
+  customSelects.get(select)?.trigger.focus();
+}
+
+function handleCustomSelectMenuKeydown(select, event) {
+  const state = customSelects.get(select);
+  if (!state) {
+    return;
+  }
+
+  const options = getCustomSelectOptions(state);
+  const currentIndex = options.indexOf(document.activeElement);
+  const focusOption = (index) => {
+    if (!options.length) {
+      return;
+    }
+    const next = options.at((index + options.length) % options.length);
+    next?.focus();
+  };
+
+  if (event.key === "Tab") {
+    closeCustomSelect(select);
+    return;
+  }
+  if (event.key === "ArrowDown") {
+    event.preventDefault();
+    focusOption(currentIndex + 1);
+    return;
+  }
+  if (event.key === "ArrowUp") {
+    event.preventDefault();
+    focusOption(currentIndex - 1);
+    return;
+  }
+  if (event.key === "Home") {
+    event.preventDefault();
+    options[0]?.focus();
+    return;
+  }
+  if (event.key === "End") {
+    event.preventDefault();
+    options.at(-1)?.focus();
+    return;
+  }
+  if (event.key === "Enter" || event.key === " ") {
+    event.preventDefault();
+    const option = document.activeElement?.closest(".custom-select-option");
+    if (option) {
+      chooseCustomSelectValue(select, option.dataset.value || "");
+    }
+    return;
+  }
+  if (event.key === "Escape") {
+    event.preventDefault();
+    closeCustomSelect(select);
+    state.trigger.focus();
+  }
+}
+
+function getCustomSelectOptions(state) {
+  return Array.from(state.menu.querySelectorAll(".custom-select-option"));
+}
+
+function syncCustomSelect(select) {
+  const state = customSelects.get(select);
+  if (!state) {
+    return;
+  }
+
+  const selectedOption = Array.from(select.options).find((option) => {
+    return option.value === select.value;
+  });
+  const selectedText = selectedOption?.textContent || select.value || "请选择";
+  state.value.textContent = selectedText;
+  state.trigger.setAttribute("aria-label", `${state.label}：${selectedText}`);
+
+  getCustomSelectOptions(state).forEach((option) => {
+    const isSelected = option.dataset.value === select.value;
+    option.classList.toggle("is-selected", isSelected);
+    option.setAttribute("aria-selected", String(isSelected));
+  });
 }
 
 function clearLocalPreview() {
@@ -190,6 +545,9 @@ function applyForm(config) {
   autoThemeInput.checked = config.auto_theme_enabled !== false;
   advancedCssInput.value = config.advanced_css || "";
   backgroundName.textContent = config.background_image || "未设置";
+  syncCustomSelect(fitInput);
+  syncCustomSelect(positionInput);
+  syncCustomSelect(textModeInput);
   syncThemeColorPreview(config);
   renderGallery(config);
   if (latestStatus) {
@@ -215,32 +573,54 @@ function updatePreview() {
   const config = configFromForm();
   const imageUrl = localPreviewUrl || remotePreviewDataUrl || "";
 
-  preview.style.setProperty("--preview-fit", config.background_fit);
-  preview.style.setProperty("--preview-position", config.background_position);
-  preview.style.setProperty("--preview-blur", `${config.background_blur}px`);
-  preview.style.setProperty(
-    "--preview-inset",
-    `${config.background_blur > 0 ? config.background_blur + 16 : 0}px`,
-  );
-  preview.style.setProperty("--preview-filter", buildBackgroundFilter(config));
-  preview.style.setProperty("--preview-dim", String(config.background_dim));
-  preview.style.setProperty(
-    "--preview-text-shadow",
-    buildPreviewTextShadow(config),
-  );
-  preview.classList.toggle("is-disabled", !config.enabled);
-  preview.classList.toggle("has-image", Boolean(imageUrl));
-  previewImage.src = imageUrl || "";
-  previewImage.style.objectFit = previewObjectFit(config.background_fit);
-  previewImage.style.objectPosition = config.background_position;
-  previewImage.alt = imageUrl ? "当前背景预览" : "";
+  effectPreviews.forEach((preview) => {
+    const image = preview.querySelector(".preview-image");
+    preview.style.setProperty("--preview-fit", config.background_fit);
+    preview.style.setProperty("--preview-position", config.background_position);
+    preview.style.setProperty("--preview-blur", `${config.background_blur}px`);
+    preview.style.setProperty(
+      "--preview-inset",
+      `${config.background_blur > 0 ? config.background_blur + 16 : 0}px`,
+    );
+    preview.style.setProperty("--preview-filter", buildBackgroundFilter(config));
+    preview.style.setProperty("--preview-dim", String(config.background_dim));
+    preview.style.setProperty("--preview-surface", String(config.surface_opacity));
+    preview.style.setProperty("--preview-surface-fill-top", formatCssNumber(0.02 + config.surface_opacity * 0.18));
+    preview.style.setProperty("--preview-surface-fill-bottom", formatCssNumber(0.005 + config.surface_opacity * 0.08));
+    preview.style.setProperty("--preview-surface-rim", formatCssNumber(0.16 + config.surface_opacity * 0.24));
+    preview.style.setProperty("--preview-surface-shadow", formatCssNumber(0.08 + config.surface_opacity * 0.12));
+    preview.style.setProperty(
+      "--preview-text-shadow",
+      buildPreviewTextShadow(config),
+    );
+    preview.style.setProperty(
+      "--preview-primary",
+      normalizeHexColor(config.theme_primary) || "rgba(255, 255, 255, 0.88)",
+    );
+    preview.style.setProperty(
+      "--preview-secondary",
+      normalizeHexColor(config.theme_secondary) || "rgba(255, 255, 255, 0.5)",
+    );
+    preview.classList.toggle("is-disabled", !config.enabled);
+    preview.classList.toggle("has-image", Boolean(imageUrl));
+    if (image) {
+      image.src = imageUrl || "";
+      image.style.objectFit = previewObjectFit(config.background_fit);
+      image.style.objectPosition = config.background_position;
+      image.alt = imageUrl ? "当前背景预览" : "";
+    }
+  });
+  liquidGlass.updateFilter(imageUrl, config);
 }
 
 function previewObjectFit(value) {
   if (value === "stretch") {
     return "fill";
   }
-  return ["cover", "contain", "auto"].includes(value) ? value : "cover";
+  if (value === "auto") {
+    return "none";
+  }
+  return ["cover", "contain"].includes(value) ? value : "cover";
 }
 
 function buildBackgroundFilter(config) {
@@ -366,6 +746,7 @@ function renderGallery(config) {
       return tile;
     }),
   );
+  liquidGlass.refreshTargets();
 }
 
 async function hydrateGalleryImage(filename, image) {
@@ -447,6 +828,8 @@ async function uploadBackgroundFiles(files) {
     return;
   }
 
+  let latestConfig = currentConfig;
+  let uploadedCount = 0;
   setBusy(true);
   setStatus(`正在上传 ${imageFiles.length} 张背景图片`);
   try {
@@ -459,8 +842,6 @@ async function uploadBackgroundFiles(files) {
       }
     }
 
-    let latestConfig = currentConfig;
-    let uploadedCount = 0;
     for (const file of imageFiles) {
       const response = await bridge.upload("upload-background", file);
       latestConfig = response.config;
@@ -475,10 +856,19 @@ async function uploadBackgroundFiles(files) {
     setStatus(`已加入图库 ${uploadedCount} 张背景图片`, "success");
   } catch (error) {
     clearLocalPreview();
-    if (currentConfig) {
+    if (uploadedCount > 0 && latestConfig) {
+      applyForm(latestConfig);
+      await loadRemotePreview(latestConfig);
+      setStatus(
+        `已加入图库 ${uploadedCount} 张，后续图片上传失败：${error?.message || "上传失败"}`,
+        "danger",
+      );
+    } else if (currentConfig) {
       applyForm(currentConfig);
+      setStatus(error?.message || "上传失败", "danger");
+    } else {
+      setStatus(error?.message || "上传失败", "danger");
     }
-    setStatus(error?.message || "上传失败", "danger");
   } finally {
     setBusy(false);
     fileInput.value = "";
@@ -626,4 +1016,6 @@ bridge.onContext((context) => {
 });
 
 applyThemeFromContext();
+initTabs();
+initCustomSelects([fitInput, positionInput, textModeInput]);
 void loadPaletteState();
