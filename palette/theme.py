@@ -148,6 +148,8 @@ def build_theme_css(config: dict[str, Any]) -> str:
             "",
             _page_specific_surface_css(),
             "",
+            _config_tabs_css(),
+            "",
             _settings_surface_css(),
             "",
             _extension_surface_css(),
@@ -611,6 +613,110 @@ def _page_specific_surface_css() -> str:
             "html.astrbot-palette-active #app .v-main .list-config-item {",
             f"  background: {neutral_soft} !important;",
             "  box-shadow: none !important;",
+            "}",
+        ]
+    )
+
+
+def _config_tabs_css() -> str:
+    tab_shadow = (
+        "0 1px 4px rgba(0, 0, 0, 0.44), "
+        "0 -1px 4px rgba(255, 255, 255, 0.18)"
+    )
+    primary_border = "rgba(var(--v-theme-primary), 0.72)"
+    base_tabs = [
+        "html.astrbot-palette-active #app .v-main .config-panel .config-tabs",
+        "html.astrbot-palette-active #app .v-main .config-panel .config-tabs.v-tabs",
+        "html.astrbot-palette-active #app .v-main .config-panel .config-tabs .v-slide-group",
+        "html.astrbot-palette-active .v-overlay-container .config-drawer-card .config-tabs",
+        "html.astrbot-palette-active .v-overlay-container .config-drawer-card .config-tabs.v-tabs",
+        "html.astrbot-palette-active .v-overlay-container .config-drawer-card .config-tabs .v-slide-group",
+    ]
+    tab_buttons = [
+        "html.astrbot-palette-active #app .v-main .config-panel .config-tabs .v-tab",
+        "html.astrbot-palette-active #app .v-main .config-panel .config-tabs .v-btn.v-tab",
+        "html.astrbot-palette-active .v-overlay-container .config-drawer-card .config-tabs .v-tab",
+        "html.astrbot-palette-active .v-overlay-container .config-drawer-card .config-tabs .v-btn.v-tab",
+    ]
+    active_tabs = [
+        "html.astrbot-palette-active #app .v-main .config-panel .config-tabs .v-tab.v-tab--selected",
+        "html.astrbot-palette-active #app .v-main .config-panel .config-tabs .v-tab.v-btn--active",
+        "html.astrbot-palette-active #app .v-main .config-panel .config-tabs .v-tab.v-slide-group-item--active",
+        "html.astrbot-palette-active .v-overlay-container .config-drawer-card .config-tabs .v-tab.v-tab--selected",
+        "html.astrbot-palette-active .v-overlay-container .config-drawer-card .config-tabs .v-tab.v-btn--active",
+        "html.astrbot-palette-active .v-overlay-container .config-drawer-card .config-tabs .v-tab.v-slide-group-item--active",
+    ]
+    overlays = [
+        "html.astrbot-palette-active #app .v-main .config-panel .config-tabs .v-tab .v-btn__overlay",
+        "html.astrbot-palette-active #app .v-main .config-panel .config-tabs .v-tab .v-btn__underlay",
+        "html.astrbot-palette-active .v-overlay-container .config-drawer-card .config-tabs .v-tab .v-btn__overlay",
+        "html.astrbot-palette-active .v-overlay-container .config-drawer-card .config-tabs .v-tab .v-btn__underlay",
+    ]
+    sliders = [
+        "html.astrbot-palette-active #app .v-main .config-panel .config-tabs .v-tab__slider",
+        "html.astrbot-palette-active .v-overlay-container .config-drawer-card .config-tabs .v-tab__slider",
+    ]
+    return "\n".join(
+        [
+            ",\n".join(base_tabs)
+            + " {\n"
+            "  background: transparent !important;\n"
+            "  border: 0 !important;\n"
+            "  box-shadow: none !important;\n"
+            "}",
+            "",
+            ",\n".join(tab_buttons)
+            + " {\n"
+            "  background: transparent !important;\n"
+            "  border: 0 !important;\n"
+            "  box-shadow: none !important;\n"
+            "  outline: 0 !important;\n"
+            "  opacity: 0.9 !important;\n"
+            "  position: relative !important;\n"
+            f"  text-shadow: {tab_shadow} !important;\n"
+            "}",
+            "",
+            "@media (min-width: 768px) {",
+            ",\n".join(tab_buttons)
+            + " {\n"
+            "  padding-inline-start: 18px !important;\n"
+            "}",
+            "}",
+            "",
+            ",\n".join(overlays)
+            + " {\n"
+            "  background: transparent !important;\n"
+            "  opacity: 0 !important;\n"
+            "}",
+            "",
+            ",\n".join(sliders)
+            + " {\n"
+            "  display: none !important;\n"
+            "}",
+            "",
+            ",\n".join(active_tabs)
+            + " {\n"
+            "  background: transparent !important;\n"
+            "  border: 0 !important;\n"
+            "  box-shadow: inset 2px 0 0 "
+            f"{primary_border} !important;\n"
+            "  color: rgb(var(--v-theme-primary)) !important;\n"
+            "  opacity: 1 !important;\n"
+            "}",
+            "",
+            ",\n".join([f"{selector}:hover" for selector in tab_buttons])
+            + " {\n"
+            "  background: transparent !important;\n"
+            "  border: 0 !important;\n"
+            "  box-shadow: none !important;\n"
+            "  color: rgb(var(--v-theme-primary)) !important;\n"
+            "  opacity: 1 !important;\n"
+            "}",
+            "",
+            ",\n".join([f"{selector}:hover" for selector in active_tabs])
+            + " {\n"
+            "  box-shadow: inset 2px 0 0 "
+            f"{primary_border} !important;\n"
             "}",
         ]
     )
