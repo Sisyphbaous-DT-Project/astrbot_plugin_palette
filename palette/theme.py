@@ -84,7 +84,16 @@ def build_theme_css(config: dict[str, Any]) -> str:
             f"  --astrbot-palette-background-saturation: {background_saturation};",
             "}",
             "",
-            "html.astrbot-palette-active,",
+            "html.astrbot-palette-active {",
+            "  min-height: 100%;",
+            "  background-color: transparent !important;",
+            "  background-image: var(--astrbot-palette-background-image) !important;",
+            "  background-repeat: no-repeat !important;",
+            "  background-position: var(--astrbot-palette-background-position, center center) !important;",
+            "  background-size: var(--astrbot-palette-background-fit, cover) !important;",
+            "  background-attachment: fixed !important;",
+            "}",
+            "",
             "html.astrbot-palette-active body {",
             "  min-height: 100%;",
             "  background: transparent !important;",
@@ -136,6 +145,8 @@ def build_theme_css(config: dict[str, Any]) -> str:
             "  backdrop-filter: none !important;",
             "}",
             "",
+            _floating_scrollbar_css(),
+            "",
             _surface_css(),
             "",
             _top_header_css(),
@@ -181,6 +192,101 @@ def sanitize_advanced_css(value: Any) -> str:
     if _EXTERNAL_URL.search(css):
         return "/* AstrBot调色盘：已拦截外链 url()。 */"
     return css
+
+
+def _floating_scrollbar_css() -> str:
+    thumb = (
+        "rgba(var(--v-theme-primary), "
+        "calc(0.42 + var(--astrbot-palette-surface-opacity, 0) * 0.18))"
+    )
+    thumb_hover = (
+        "rgba(var(--v-theme-primary), "
+        "calc(0.62 + var(--astrbot-palette-surface-opacity, 0) * 0.16))"
+    )
+    thumb_active = "rgba(var(--v-theme-primary), 0.86)"
+    thumb_shadow = "rgba(var(--v-theme-primary), 0.22)"
+    return "\n".join(
+        [
+            "html.astrbot-palette-active {",
+            "  --astrbot-scrollbar-track: transparent;",
+            f"  --astrbot-scrollbar-thumb: {thumb};",
+            f"  --astrbot-scrollbar-thumb-hover: {thumb_hover};",
+            f"  --astrbot-scrollbar-thumb-active: {thumb_active};",
+            "  --astrbot-scrollbar-thumb-border: transparent;",
+            f"  --astrbot-scrollbar-thumb-shadow: {thumb_shadow};",
+            "  scrollbar-color: var(--astrbot-scrollbar-thumb) transparent;",
+            "  scrollbar-gutter: auto;",
+            "}",
+            "",
+            "html.astrbot-palette-active,",
+            "html.astrbot-palette-active body,",
+            "html.astrbot-palette-active #app,",
+            "html.astrbot-palette-active #app .v-application,",
+            "html.astrbot-palette-active #app .v-application__wrap,",
+            "html.astrbot-palette-active #app .v-main,",
+            "html.astrbot-palette-active #app .page-wrapper,",
+            "html.astrbot-palette-active #app .v-navigation-drawer,",
+            "html.astrbot-palette-active #app .v-overlay-container,",
+            "html.astrbot-palette-active .v-overlay-container {",
+            "  scrollbar-color: var(--astrbot-scrollbar-thumb) transparent !important;",
+            "  scrollbar-gutter: auto !important;",
+            "}",
+            "",
+            "html.astrbot-palette-active * {",
+            "  scrollbar-color: var(--astrbot-scrollbar-thumb) transparent !important;",
+            "}",
+            "",
+            "html.astrbot-palette-active::-webkit-scrollbar,",
+            "html.astrbot-palette-active *::-webkit-scrollbar {",
+            "  width: 8px !important;",
+            "  height: 8px !important;",
+            "  background: transparent !important;",
+            "  border: 0 !important;",
+            "}",
+            "",
+            "html.astrbot-palette-active::-webkit-scrollbar-track,",
+            "html.astrbot-palette-active::-webkit-scrollbar-track-piece,",
+            "html.astrbot-palette-active::-webkit-scrollbar-corner,",
+            "html.astrbot-palette-active *::-webkit-scrollbar-track,",
+            "html.astrbot-palette-active *::-webkit-scrollbar-track-piece,",
+            "html.astrbot-palette-active *::-webkit-scrollbar-corner {",
+            "  background: transparent !important;",
+            "  border: 0 !important;",
+            "  box-shadow: none !important;",
+            "}",
+            "",
+            "html.astrbot-palette-active::-webkit-scrollbar-thumb,",
+            "html.astrbot-palette-active *::-webkit-scrollbar-thumb {",
+            "  background-color: var(--astrbot-scrollbar-thumb) !important;",
+            "  background-clip: border-box !important;",
+            "  border: 0 !important;",
+            "  border-radius: 999px !important;",
+            "  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.16) !important;",
+            "  min-height: 48px !important;",
+            "}",
+            "",
+            "html.astrbot-palette-active::-webkit-scrollbar-thumb:hover,",
+            "html.astrbot-palette-active *::-webkit-scrollbar-thumb:hover {",
+            "  background-color: var(--astrbot-scrollbar-thumb-hover) !important;",
+            "  box-shadow: 0 0 8px var(--astrbot-scrollbar-thumb-shadow) !important;",
+            "}",
+            "",
+            "html.astrbot-palette-active::-webkit-scrollbar-thumb:active,",
+            "html.astrbot-palette-active *::-webkit-scrollbar-thumb:active {",
+            "  background-color: var(--astrbot-scrollbar-thumb-active) !important;",
+            "}",
+            "",
+            "html.astrbot-palette-active .hidden-scrollbar,",
+            "html.astrbot-palette-active .hidden-scrollbar * {",
+            "  scrollbar-width: none !important;",
+            "}",
+            "",
+            "html.astrbot-palette-active .hidden-scrollbar::-webkit-scrollbar,",
+            "html.astrbot-palette-active .hidden-scrollbar *::-webkit-scrollbar {",
+            "  display: none !important;",
+            "}",
+        ]
+    )
 
 
 def _top_header_css() -> str:
