@@ -462,7 +462,7 @@ async function loadRemotePreview(config) {
   }
 
   try {
-    const previewResponse = await bridge.apiGet("background-preview");
+    const previewResponse = await bridge.apiGet("background-thumbnail");
     if (previewResponse?.background_image === config.background_image) {
       remotePreviewDataUrl = previewResponse.data_url || "";
     }
