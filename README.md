@@ -2,13 +2,13 @@
 
 AstrBot调色盘是一个 AstrBot WebUI 美化插件。当前版本聚焦于背景图库、透明界面、Liquid Glass 设置页、文字可读性增强和壁纸主题色联动，让 Dashboard 可以在不修改 AstrBot 源码的前提下换上自定义壁纸。
 
-> 当前版本：`0.4.0`
+> 当前版本：`0.4.1`
 >
 > 兼容 AstrBot：`>=4.26.0-beta1`
 
 ## 功能
 
-- 上传多张 WebUI 背景图片，并通过缩略图库一键切换。
+- 上传多张 WebUI 背景图片，并通过真实压缩缩略图库一键切换。
 - 支持打开或刷新 WebUI 时从图库随机切换背景。
 - 调整背景填充方式、位置、遮罩、模糊、灰度、亮度、对比度和饱和度。
 - 将 Dashboard 常驻面板透明化，支持完全透明的悬浮文字效果。
@@ -48,7 +48,7 @@ git clone https://github.com/Sisyphbaous-DT-Project/astrbot_plugin_palette.git
 
 - 插件名：`astrbot_plugin_palette`
 - 展示名：`AstrBot调色盘`
-- 版本：`0.4.0`
+- 版本：`0.4.1`
 
 ## 使用
 
@@ -113,6 +113,8 @@ themeSecondary
 
 上传图片只会加入图库，不会自动切换当前背景。点击缩略图后，插件会把该图片保存为当前背景，并重新读取主题色。
 
+`0.4.1` 起，图库缩略图会在上传时或首次访问时生成最大边 `320px` 的压缩缓存。设置页只加载小图，不再把原图 base64 当缩略图使用，因此云端部署和多张 4K 壁纸场景下打开图库会更轻。
+
 开启“打开或刷新时随机背景”后，Dashboard 每次重新打开或整页刷新都会从图库随机选一张，并写回当前背景。页面内路由切换不会触发随机，避免使用过程中频繁换图。
 
 “拉伸铺满”会让图片完整铺满窗口且不裁切，但可能改变原图比例。
@@ -149,6 +151,12 @@ themeSecondary
 data/plugin_data/astrbot_plugin_palette/backgrounds
 ```
 
+图库缩略图缓存在：
+
+```text
+data/plugin_data/astrbot_plugin_palette/thumbnails
+```
+
 Dashboard 入口备份保存在：
 
 ```text
@@ -166,6 +174,7 @@ data/plugin_data/astrbot_plugin_palette/dashboard_backups
 | `POST` | `/astrbot_plugin_palette/config` | 保存配置 |
 | `GET` | `/astrbot_plugin_palette/theme.css` | 获取运行时主题 CSS |
 | `GET` | `/astrbot_plugin_palette/background-preview` | 获取当前背景预览 |
+| `GET` | `/astrbot_plugin_palette/background-thumbnail` | 获取图库压缩缩略图 |
 | `POST` | `/astrbot_plugin_palette/upload-background` | 上传背景图片到图库 |
 | `POST` | `/astrbot_plugin_palette/backgrounds/select` | 切换当前背景图片 |
 | `POST` | `/astrbot_plugin_palette/backgrounds/delete` | 删除图库背景图片 |
@@ -200,6 +209,7 @@ astrbot_palette_dark_theme_bootstrapped=1
 ```bash
 PYTHONPATH=/path/to/AstrBot python -m py_compile main.py palette/*.py
 node --check pages/settings/app.js
+node --check pages/settings/liquid-glass.js
 python -m json.tool _conf_schema.json
 git diff --check
 ```
@@ -219,6 +229,8 @@ git diff --check
 `0.3.0` 新增多背景图库、缩略图切换、刷新随机背景和拉伸铺满。
 
 `0.4.0` 将插件设置页重构为 Apple-like Liquid Glass 分标签界面，并补齐全标签效果预览、示例 UI、选项卡可读性和顶栏黑线修复。
+
+`0.4.1` 将图库缩略图改为后端生成并缓存的 320px 小图，优化云端部署和多张 4K 壁纸场景下的设置页加载速度。
 
 后续版本会继续补齐更多页面的透明化细节，并探索更完整的主题色板推导。
 

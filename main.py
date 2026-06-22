@@ -30,6 +30,10 @@ from .palette.colors import extract_theme_colors, normalize_hex_color
 from .palette.injector import ensure_dashboard_injection
 from .palette.paths import PalettePaths
 from .palette.theme import build_theme_css
+from .palette.thumbnails import (
+    delete_background_thumbnails,
+    ensure_background_thumbnail,
+)
 
 
 @register(PLUGIN_NAME, AUTHOR, DESCRIPTION, VERSION)
@@ -78,6 +82,12 @@ class PalettePlugin(Star):
             self.get_background_preview,
             ["GET"],
             "获取 AstrBot 调色盘当前背景预览",
+        )
+        context.register_web_api(
+            f"{ROUTE_PREFIX}/background-thumbnail",
+            self.get_background_thumbnail,
+            ["GET"],
+            "获取 AstrBot 调色盘背景缩略图",
         )
         context.register_web_api(
             f"{ROUTE_PREFIX}/upload-background",
@@ -224,6 +234,7 @@ class PalettePlugin(Star):
             target_path = self._resolve_background(filename)
             with suppress(FileNotFoundError):
                 target_path.unlink()
+            delete_background_thumbnails(self.paths.thumbnail_dir, filename)
 
             background_images = [
                 item for item in config["background_images"] if item != filename
@@ -333,6 +344,37 @@ class PalettePlugin(Star):
             {
                 "background_image": filename,
                 "data_url": f"data:{content_type};base64,{data}",
+            }
+        )
+
+    async def get_background_thumbnail(self):
+        filename = str(
+            request.query.get("filename") or self._config_str("background_image", "")
+        ).strip()
+        if not filename:
+            return json_response(
+                {
+                    "background_image": "",
+                    "data_url": "",
+                }
+            )
+
+        try:
+            path = self._resolve_background(filename, must_exist=True)
+            thumbnail = ensure_background_thumbnail(
+                path,
+                self.paths.thumbnail_dir,
+                filename,
+            )
+        except ValueError as exc:
+            return error_response(str(exc), status_code=404)
+
+        data = base64.b64encode(thumbnail.path.read_bytes()).decode("ascii")
+        return json_response(
+            {
+                "background_image": filename,
+                "content_type": thumbnail.content_type,
+                "data_url": f"data:{thumbnail.content_type};base64,{data}",
             }
         )
 
@@ -649,6 +691,12 @@ class PalettePlugin(Star):
             filename = f"background-{background_id}{detected_suffix}"
             target_path = self.paths.resolve_background_file(filename)
             temp_path.replace(target_path)
+            with suppress(Exception):
+                ensure_background_thumbnail(
+                    target_path,
+                    self.paths.thumbnail_dir,
+                    filename,
+                )
         except Exception:
             with suppress(FileNotFoundError):
                 temp_path.unlink()
@@ -684,11 +732,20 @@ class PalettePlugin(Star):
             f"?filename={quote(filename)}"
         )
 
+    def _background_thumbnail_url(self, filename: str) -> str:
+        filename = filename.strip()
+        if not filename:
+            return ""
+        return (
+            f"/api/v1/plugins/extensions/{PLUGIN_NAME}/background-thumbnail"
+            f"?filename={quote(filename)}"
+        )
+
     def _background_item(self, filename: str, selected: bool) -> dict[str, Any]:
         return {
             "filename": filename,
             "url": self._background_url(filename),
-            "thumbnail_url": self._background_preview_url(filename),
+            "thumbnail_url": self._background_thumbnail_url(filename),
             "preview_url": self._background_preview_url(filename),
             "selected": selected,
         }

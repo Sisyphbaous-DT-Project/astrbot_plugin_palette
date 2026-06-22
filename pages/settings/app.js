@@ -472,15 +472,15 @@ async function loadRemotePreview(config) {
   updatePreview();
 }
 
-async function getPreviewDataUrl(filename) {
+async function getThumbnailDataUrl(filename) {
   if (!filename) {
     return "";
   }
   if (previewCache.has(filename)) {
     return previewCache.get(filename);
   }
-  const previewResponse = await bridge.apiGet("background-preview", { filename });
-  const dataUrl = previewResponse?.data_url || "";
+  const thumbnailResponse = await bridge.apiGet("background-thumbnail", { filename });
+  const dataUrl = thumbnailResponse?.data_url || "";
   if (dataUrl) {
     previewCache.set(filename, dataUrl);
   }
@@ -751,7 +751,7 @@ function renderGallery(config) {
 
 async function hydrateGalleryImage(filename, image) {
   try {
-    const dataUrl = await getPreviewDataUrl(filename);
+    const dataUrl = await getThumbnailDataUrl(filename);
     if (dataUrl) {
       image.src = dataUrl;
     }
