@@ -3,7 +3,12 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import shutil
+import sys
+import time
+from contextlib import suppress as contextlib_suppress
 from dataclasses import dataclass
+from pathlib import Path
 
 from .constants import (
     INJECTION_END_MARKER,
@@ -15,10 +20,21 @@ from .paths import PalettePaths
 
 try:
     from astrbot.core.config.default import VERSION as ASTRBOT_VERSION
-    from astrbot.core.utils.io import is_dashboard_dist_compatible
+    from astrbot.core.utils.io import (
+        get_bundled_dashboard_dist_path,
+        is_dashboard_dist_compatible,
+        should_use_bundled_dashboard_dist,
+    )
 except Exception:  # pragma: no cover - 兼容旧版 AstrBot
     ASTRBOT_VERSION = ""
+    get_bundled_dashboard_dist_path = None
     is_dashboard_dist_compatible = None
+    should_use_bundled_dashboard_dist = None
+
+
+_PREPARED_FALLBACK_DISTS: set[str] = set()
+_FALLBACK_RESTART_MARKER = ".palette-restart-required"
+_PROCESS_START_TIME = time.time()
 
 
 @dataclass(frozen=True)
@@ -31,6 +47,9 @@ class InjectionStatus:
     message: str
     target: str = ""
     target_compatible: bool | None = None
+    target_source: str = ""
+    restart_required: bool = False
+    fallback_target: str = ""
 
     def to_dict(self) -> dict[str, bool | str | None]:
         return {
@@ -40,31 +59,55 @@ class InjectionStatus:
             "message": self.message,
             "target": self.target,
             "target_compatible": self.target_compatible,
+            "target_source": self.target_source,
+            "restart_required": self.restart_required,
+            "fallback_target": self.fallback_target,
         }
+
+
+@dataclass(frozen=True)
+class DashboardTarget:
+    """描述本次应注入的 Dashboard 入口。"""
+
+    dist: Path
+    index: Path
+    source: str
+    compatible: bool | None
+    restart_required: bool = False
+    fallback_target: str = ""
 
 
 def ensure_dashboard_injection(paths: PalettePaths) -> InjectionStatus:
     """向 AstrBot 运行时 Dashboard 入口注入调色盘启动脚本。"""
 
-    index_file = paths.user_dashboard_index
-    target_info = _dashboard_target_info(paths)
+    target = _resolve_dashboard_target(paths, allow_copy_fallback=True)
+    index_file = target.index
+    target_info = _dashboard_target_info(target)
     if not index_file.is_file():
         return InjectionStatus(
             supported=False,
             patched=False,
             index_exists=False,
-            message="未找到 data/dist/index.html，无法注入 WebUI 背景脚本。",
+            message=f"未找到 {target.source} WebUI 入口，无法注入背景脚本。",
             **target_info,
         )
 
     try:
         content = index_file.read_text(encoding="utf-8")
+    except OSError as exc:
+        return InjectionStatus(
+            supported=False,
+            patched=False,
+            index_exists=True,
+            message=f"无法读取 {target.source} WebUI 入口：{exc}",
+            **target_info,
+        )
     except UnicodeDecodeError:
         return InjectionStatus(
             supported=False,
             patched=False,
             index_exists=True,
-            message="data/dist/index.html 不是有效 UTF-8，已停止写入以避免破坏 WebUI。",
+            message=f"{target.source} WebUI 入口不是有效 UTF-8，已停止写入以避免破坏 WebUI。",
             **target_info,
         )
 
@@ -80,47 +123,98 @@ def ensure_dashboard_injection(paths: PalettePaths) -> InjectionStatus:
         )
 
     if next_content == content:
-        return inspect_injection(paths)
+        return _inspect_target(target)
 
-    paths.ensure_runtime_dirs()
-    _backup_index_if_needed(paths, content)
     temp_file = index_file.with_suffix(f"{index_file.suffix}.palette.tmp")
-    temp_file.write_text(next_content, encoding="utf-8")
-    temp_file.replace(index_file)
-    return inspect_injection(paths)
+    try:
+        paths.ensure_runtime_dirs()
+        _backup_index_if_needed(paths, index_file, content)
+        temp_file.write_text(next_content, encoding="utf-8")
+        temp_file.replace(index_file)
+    except OSError as exc:
+        with contextlib_suppress(FileNotFoundError):
+            temp_file.unlink()
+        if target.source == "bundled":
+            try:
+                fallback = _prepare_user_dist_fallback(paths, target)
+            except OSError as fallback_exc:
+                return InjectionStatus(
+                    supported=False,
+                    patched=False,
+                    index_exists=True,
+                    message=(
+                        f"无法写入 {target.source} WebUI 入口，"
+                        f"复制到 data/dist 也失败：{fallback_exc}"
+                    ),
+                    **target_info,
+                )
+            if fallback is not None:
+                return _inject_prepared_fallback(paths, fallback)
+        return InjectionStatus(
+            supported=False,
+            patched=False,
+            index_exists=True,
+            message=f"无法写入 {target.source} WebUI 入口：{exc}",
+            **target_info,
+        )
+    return _inspect_target(target)
 
 
 def inspect_injection(paths: PalettePaths) -> InjectionStatus:
     """检测 WebUI 运行时补丁状态。"""
 
-    index_file = paths.user_dashboard_index
-    target_info = _dashboard_target_info(paths)
+    target = _resolve_dashboard_target(paths, allow_copy_fallback=False)
+    return _inspect_target(target)
+
+
+def _inspect_target(target: DashboardTarget) -> InjectionStatus:
+    """检测指定 Dashboard 入口的注入状态。"""
+
+    index_file = target.index
+    target_info = _dashboard_target_info(target)
     if not index_file.is_file():
         return InjectionStatus(
             supported=False,
             patched=False,
             index_exists=False,
-            message="未找到 data/dist/index.html，无法检测调色盘注入状态。",
+            message=f"未找到 {target.source} WebUI 入口，无法检测调色盘注入状态。",
             **target_info,
         )
 
     try:
         content = index_file.read_text(encoding="utf-8")
+    except OSError as exc:
+        return InjectionStatus(
+            supported=False,
+            patched=False,
+            index_exists=True,
+            message=f"无法读取 {target.source} WebUI 入口：{exc}",
+            **target_info,
+        )
     except UnicodeDecodeError:
         return InjectionStatus(
             supported=False,
             patched=False,
             index_exists=True,
-            message="data/dist/index.html 不是有效 UTF-8，无法检测调色盘注入状态。",
+            message=f"{target.source} WebUI 入口不是有效 UTF-8，无法检测调色盘注入状态。",
             **target_info,
         )
 
     patched = INJECTION_START_MARKER in content and INJECTION_END_MARKER in content
+    message = "已检测到调色盘注入标记。" if patched else "未检测到调色盘注入标记。"
+    if patched and target.restart_required:
+        message = "已准备 data/dist WebUI 注入，重启 AstrBot 后生效。"
+    elif patched and target.source == "bundled":
+        message = "已注入 AstrBot 内置 WebUI 入口。"
+    elif patched and target.source == "custom":
+        message = "已注入自定义 WebUI 入口。"
+    if patched and not target.restart_required and target.source == "data/dist":
+        _clear_restart_marker(target.dist)
     return InjectionStatus(
         supported=True,
         patched=patched,
         index_exists=True,
-        message="已检测到调色盘注入标记。" if patched else "未检测到调色盘注入标记。",
+        message=message,
         **target_info,
     )
 
@@ -157,28 +251,278 @@ def _insert_block_before_head_close(content: str, block: str) -> str:
     return f"{content[:head_close.start()]}{block}\n  {content[head_close.start():]}"
 
 
-def _backup_index_if_needed(paths: PalettePaths, content: str) -> None:
+def _backup_index_if_needed(paths: PalettePaths, index_file: Path, content: str) -> None:
     if INJECTION_START_MARKER in content or INJECTION_END_MARKER in content:
         return
     digest = hashlib.sha256(content.encode("utf-8")).hexdigest()[:12]
-    backup_file = paths.patch_backup_dir / f"index-{digest}.html"
+    target_digest = hashlib.sha256(str(index_file).encode("utf-8")).hexdigest()[:8]
+    backup_file = paths.patch_backup_dir / f"index-{target_digest}-{digest}.html"
     if backup_file.exists():
         return
     paths.patch_backup_dir.mkdir(parents=True, exist_ok=True)
     backup_file.write_text(content, encoding="utf-8")
 
 
-def _dashboard_target_info(paths: PalettePaths) -> dict[str, str | bool | None]:
-    target = str(paths.user_dashboard_dist)
-    compatible: bool | None = None
-    if is_dashboard_dist_compatible is not None and ASTRBOT_VERSION:
-        compatible = bool(
-            is_dashboard_dist_compatible(paths.user_dashboard_dist, ASTRBOT_VERSION)
-        )
+def _dashboard_target_info(target: DashboardTarget) -> dict[str, str | bool | None]:
     return {
-        "target": target,
-        "target_compatible": compatible,
+        "target": str(target.dist),
+        "target_compatible": target.compatible,
+        "target_source": target.source,
+        "restart_required": target.restart_required,
+        "fallback_target": target.fallback_target,
     }
+
+
+def _resolve_dashboard_target(
+    paths: PalettePaths,
+    *,
+    allow_copy_fallback: bool,
+) -> DashboardTarget:
+    custom_dist = _custom_dashboard_dist()
+    if custom_dist is not None:
+        return _target_from_dist(custom_dist, "custom")
+
+    user_target = _target_from_dist(paths.user_dashboard_dist, "data/dist")
+    if _is_compatible(user_target.dist):
+        if allow_copy_fallback and _is_prepared_fallback(paths):
+            bundled_target = _bundled_dashboard_target()
+            return _target_from_dist(
+                paths.user_dashboard_dist,
+                "data/dist",
+                restart_required=True,
+                fallback_target=str(bundled_target.dist) if bundled_target else "",
+            )
+        return user_target
+
+    bundled_target = _bundled_dashboard_target()
+    if bundled_target is not None:
+        if _should_use_bundled(paths.user_dashboard_dist) or _is_compatible(
+            bundled_target.dist
+        ):
+            return bundled_target
+
+    return user_target
+
+
+def _target_from_dist(
+    dist: Path,
+    source: str,
+    *,
+    restart_required: bool = False,
+    fallback_target: str = "",
+) -> DashboardTarget:
+    return DashboardTarget(
+        dist=dist,
+        index=dist / "index.html",
+        source=source,
+        compatible=_compatibility(dist),
+        restart_required=restart_required,
+        fallback_target=fallback_target,
+    )
+
+
+def _custom_dashboard_dist() -> Path | None:
+    cli_dist = _webui_dir_from_argv(sys.argv[1:])
+    if not cli_dist:
+        return None
+    dist = Path(cli_dist).expanduser()
+    if dist.exists():
+        return dist.resolve()
+    return None
+
+
+def _webui_dir_from_argv(argv: list[str]) -> str | None:
+    for idx, arg in enumerate(argv):
+        if arg.startswith("--webui-dir="):
+            return arg.split("=", 1)[1].strip() or None
+        if arg != "--webui-dir":
+            continue
+        if idx + 1 >= len(argv):
+            return None
+        value_parts: list[str] = []
+        for value_arg in argv[idx + 1 :]:
+            if value_arg.startswith("-"):
+                break
+            if value_arg:
+                value_parts.append(value_arg)
+        return " ".join(value_parts).strip() or None
+    return None
+
+
+def _bundled_dashboard_target() -> DashboardTarget | None:
+    if get_bundled_dashboard_dist_path is None:
+        return None
+    try:
+        dist = Path(get_bundled_dashboard_dist_path())
+    except Exception:
+        return None
+    return _target_from_dist(dist, "bundled")
+
+
+def _compatibility(dist: Path) -> bool | None:
+    if is_dashboard_dist_compatible is None or not ASTRBOT_VERSION:
+        return None
+    try:
+        return bool(is_dashboard_dist_compatible(dist, ASTRBOT_VERSION))
+    except Exception:
+        return False
+
+
+def _is_compatible(dist: Path) -> bool:
+    return _compatibility(dist) is True
+
+
+def _should_use_bundled(user_dist: Path) -> bool:
+    if should_use_bundled_dashboard_dist is None or not ASTRBOT_VERSION:
+        return False
+    try:
+        return bool(should_use_bundled_dashboard_dist(user_dist, ASTRBOT_VERSION))
+    except Exception:
+        return False
+
+
+def _is_prepared_fallback(paths: PalettePaths) -> bool:
+    if str(paths.user_dashboard_dist.resolve()) in _PREPARED_FALLBACK_DISTS:
+        return True
+    marker = paths.user_dashboard_dist / _FALLBACK_RESTART_MARKER
+    if not marker.is_file():
+        return False
+    try:
+        if marker.stat().st_mtime >= _PROCESS_START_TIME:
+            return True
+    except OSError:
+        return False
+    _clear_restart_marker(paths.user_dashboard_dist)
+    return False
+
+
+def _clear_restart_marker(dist: Path) -> None:
+    with contextlib_suppress(OSError):
+        (dist / _FALLBACK_RESTART_MARKER).unlink()
+
+
+def _prepare_user_dist_fallback(
+    paths: PalettePaths,
+    source_target: DashboardTarget,
+) -> DashboardTarget | None:
+    if not source_target.index.is_file():
+        return None
+    if source_target.dist.resolve() == paths.user_dashboard_dist.resolve():
+        return None
+    paths.ensure_runtime_dirs()
+    _ensure_safe_user_dist_path(paths)
+    staging_dist = _copy_dist_to_staging(paths, source_target)
+    backup_target: Path | None = None
+    try:
+        if paths.user_dashboard_dist.exists():
+            backup_target = _move_existing_user_dist_to_backup(paths)
+        shutil.move(str(staging_dist), str(paths.user_dashboard_dist))
+        (paths.user_dashboard_dist / _FALLBACK_RESTART_MARKER).write_text(
+            "restart AstrBot to serve this prepared dashboard dist\n",
+            encoding="utf-8",
+        )
+    except OSError:
+        if backup_target is not None and not paths.user_dashboard_dist.exists():
+            with contextlib_suppress(OSError):
+                shutil.move(str(backup_target), str(paths.user_dashboard_dist))
+        _cleanup_staging_dist(staging_dist)
+        raise
+    _PREPARED_FALLBACK_DISTS.add(str(paths.user_dashboard_dist.resolve()))
+    return _target_from_dist(
+        paths.user_dashboard_dist,
+        "data/dist",
+        restart_required=True,
+        fallback_target=str(source_target.dist),
+    )
+
+
+def _ensure_safe_user_dist_path(paths: PalettePaths) -> None:
+    data_root = paths.data_root.resolve()
+    user_dist = paths.user_dashboard_dist.resolve(strict=False)
+    expected = data_root / "dist"
+    if user_dist != expected:
+        raise OSError(f"data/dist 路径异常，已停止自动复制：{user_dist}")
+
+
+def _copy_dist_to_staging(
+    paths: PalettePaths,
+    source_target: DashboardTarget,
+) -> Path:
+    timestamp = time.strftime("%Y%m%d_%H%M%S")
+    digest = hashlib.sha256(str(source_target.dist).encode("utf-8")).hexdigest()[:8]
+    staging_dist = paths.data_root / f"dist.palette-copying-{timestamp}-{digest}"
+    counter = 1
+    while staging_dist.exists():
+        staging_dist = (
+            paths.data_root / f"dist.palette-copying-{timestamp}-{digest}-{counter}"
+        )
+        counter += 1
+    try:
+        shutil.copytree(source_target.dist, staging_dist)
+    except OSError:
+        _cleanup_staging_dist(staging_dist)
+        raise
+    return staging_dist
+
+
+def _cleanup_staging_dist(staging_dist: Path) -> None:
+    if not staging_dist.exists():
+        return
+    if staging_dist.is_symlink() or staging_dist.is_file():
+        with contextlib_suppress(OSError):
+            staging_dist.unlink()
+        return
+    with contextlib_suppress(OSError):
+        shutil.rmtree(staging_dist)
+
+
+def _move_existing_user_dist_to_backup(paths: PalettePaths) -> Path:
+    timestamp = time.strftime("%Y%m%d_%H%M%S")
+    digest = hashlib.sha256(str(paths.user_dashboard_dist).encode("utf-8")).hexdigest()[
+        :8
+    ]
+    backup_target = paths.patch_backup_dir / f"dist-{timestamp}-{digest}"
+    counter = 1
+    while backup_target.exists():
+        backup_target = paths.patch_backup_dir / f"dist-{timestamp}-{digest}-{counter}"
+        counter += 1
+    shutil.move(str(paths.user_dashboard_dist), str(backup_target))
+    return backup_target
+
+
+def _inject_prepared_fallback(
+    paths: PalettePaths,
+    target: DashboardTarget,
+) -> InjectionStatus:
+    index_file = target.index
+    target_info = _dashboard_target_info(target)
+    if not index_file.is_file():
+        return InjectionStatus(
+            supported=False,
+            patched=False,
+            index_exists=False,
+            message="已复制 WebUI，但未找到 data/dist/index.html。",
+            **target_info,
+        )
+    try:
+        content = index_file.read_text(encoding="utf-8")
+        next_content = _inject_content(content)
+        if next_content != content:
+            _backup_index_if_needed(paths, index_file, content)
+            temp_file = index_file.with_suffix(f"{index_file.suffix}.palette.tmp")
+            temp_file.write_text(next_content, encoding="utf-8")
+            temp_file.replace(index_file)
+    except (OSError, UnicodeDecodeError, ValueError) as exc:
+        with contextlib_suppress(NameError, FileNotFoundError):
+            temp_file.unlink()
+        return InjectionStatus(
+            supported=False,
+            patched=False,
+            index_exists=True,
+            message=f"已复制 WebUI，但注入 data/dist 失败：{exc}",
+            **target_info,
+        )
+    return _inspect_target(target)
 
 
 def _build_injection_block() -> str:

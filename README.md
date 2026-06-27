@@ -2,7 +2,7 @@
 
 AstrBot调色盘是一个 AstrBot WebUI 美化插件。当前版本聚焦于背景图库、透明界面、Liquid Glass 设置页、文字可读性增强和壁纸主题色联动，让 Dashboard 可以在不修改 AstrBot 源码的前提下换上自定义壁纸。
 
-> 当前版本：`0.4.1`
+> 当前版本：`0.4.2`
 >
 > 兼容 AstrBot：`>=4.26.0-beta1`
 
@@ -48,7 +48,7 @@ git clone https://github.com/Sisyphbaous-DT-Project/astrbot_plugin_palette.git
 
 - 插件名：`astrbot_plugin_palette`
 - 展示名：`AstrBot调色盘`
-- 版本：`0.4.1`
+- 版本：`0.4.2`
 
 ## 使用
 
@@ -135,7 +135,9 @@ themeSecondary
 
 本插件不会修改 AstrBot 源码。
 
-为了让 Dashboard 主页面能加载插件主题，本插件会在运行时向 AstrBot 的 `data/dist/index.html` 注入一段带标记的启动脚本。注入前会在插件数据目录中备份原始 `index.html`，之后重复注入会替换已有标记块，避免重复写入。
+为了让 Dashboard 主页面能加载插件主题，本插件会在运行时向 AstrBot 当前实际服务的 WebUI 入口注入一段带标记的启动脚本。插件会优先跟随 `--webui-dir` 指定目录，其次使用兼容的 `data/dist`，桌面端或新版本 AstrBot 使用内置 WebUI 时会自动注入内置 `astrbot/dashboard/dist`。
+
+如果内置 WebUI 目录不可写，插件会复制一份内置 WebUI 到 `data/dist` 并完成注入，设置页会提示需要重启 AstrBot 后生效。注入前会在插件数据目录中备份原始 `index.html`，之后重复注入会替换已有标记块，避免重复写入。
 
 注入标记如下：
 
@@ -197,7 +199,7 @@ astrbot_palette_dark_theme_bootstrapped=1
 ## 安全边界
 
 - 不修改 AstrBot 源码。
-- 只写入 AstrBot 运行时 Dashboard 入口 `data/dist/index.html` 和插件自己的数据目录。
+- 只写入 AstrBot 当前使用的 WebUI 入口和插件自己的数据目录；内置 WebUI 不可写时才会准备 `data/dist` 降级副本。
 - 高级 CSS 会拦截 `@import` 和外链 `url()`，避免引入外部资源。
 - 背景文件名会被限制为插件生成的本地文件名，避免路径穿越。
 - 上传图片会检查扩展名、大小和文件头。
@@ -231,6 +233,8 @@ git diff --check
 `0.4.0` 将插件设置页重构为 Apple-like Liquid Glass 分标签界面，并补齐全标签效果预览、示例 UI、选项卡可读性和顶栏黑线修复。
 
 `0.4.1` 将图库缩略图改为后端生成并缓存的 320px 小图，优化云端部署和多张 4K 壁纸场景下的设置页加载速度。
+
+`0.4.2` 修复桌面端和内置 WebUI 部署下的注入路径兼容问题，不再只依赖 `data/dist/index.html`。
 
 后续版本会继续补齐更多页面的透明化细节，并探索更完整的主题色板推导。
 

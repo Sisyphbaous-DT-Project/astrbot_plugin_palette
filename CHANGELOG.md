@@ -1,5 +1,18 @@
 # 更新日志
 
+## 0.4.2
+
+### 修复
+
+- 修复 AstrBot 桌面端或使用内置 WebUI 时，插件只查找 `data/dist/index.html` 导致无法注入背景脚本的问题。
+- 注入器现在会跟随 AstrBot 的 WebUI 目录优先级：自定义 `--webui-dir`、兼容的 `data/dist`、内置 `astrbot/dashboard/dist`。
+- 内置 WebUI 不可写时，会复制一份到 `data/dist` 并在状态页提示需要重启 AstrBot 后生效。
+
+### 优化
+
+- 设置页状态卡新增注入目标和重启提示，方便桌面端用户判断当前补丁是否已经生效。
+- Dashboard 入口备份文件名加入目标路径摘要，避免 `data/dist` 和内置 WebUI 的备份互相覆盖。
+
 ## 0.4.1
 
 ### 优化

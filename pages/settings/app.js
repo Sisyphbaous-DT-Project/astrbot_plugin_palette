@@ -678,6 +678,19 @@ function numberFromInput(input, fallback) {
 
 function renderStatus(status, config) {
   latestStatus = status;
+  const injection = status.injection || {};
+  const injectionSourceLabels = {
+    custom: "自定义 WebUI",
+    "data/dist": "data/dist",
+    bundled: "内置 WebUI",
+  };
+  const injectionRows = [
+    ["注入", injection.message || "未知"],
+    ["目标", injectionSourceLabels[injection.target_source] || injection.target_source || "未知"],
+  ];
+  if (injection.restart_required) {
+    injectionRows.push(["重启", "需要重启 AstrBot 后生效"]);
+  }
   renderList(statusList, [
     ["插件", `${status.plugin?.name || "unknown"} ${status.plugin?.version || ""}`],
     ["美化", config.enabled ? "已启用" : "未启用"],
@@ -686,7 +699,7 @@ function renderStatus(status, config) {
     ["主题色", config.auto_theme_enabled ? "自动同步" : "未同步"],
     ["主色", config.theme_primary || "未生成"],
     ["辅色", config.theme_secondary || "未生成"],
-    ["注入", status.injection?.message || "未知"],
+    ...injectionRows,
     ["图片", config.background_image || "未设置"],
   ]);
 }
