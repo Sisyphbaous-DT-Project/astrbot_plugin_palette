@@ -834,16 +834,12 @@ def _config_tabs_css() -> str:
 
 def _token_stats_detail_css() -> str:
     surface = "rgba(var(--v-theme-surface), var(--astrbot-palette-surface-opacity, 0))"
-    border = (
-        "rgba(var(--v-theme-on-surface), "
-        "calc(0.12 + var(--astrbot-palette-surface-opacity, 0) * 0.12))"
-    )
     primary_soft = "rgba(var(--v-theme-primary), 0.12)"
     return "\n".join(
         [
             "html.astrbot-palette-token-stats-active #app .v-main .stats-page .astrbot-palette-token-detail-panel {",
             f"  background: {surface} !important;",
-            f"  border: 1px solid {border} !important;",
+            "  border: 0 !important;",
             "  border-radius: 18px !important;",
             "  box-shadow: none !important;",
             "  display: grid !important;",
@@ -878,7 +874,7 @@ def _token_stats_detail_css() -> str:
             "}",
             "",
             "html.astrbot-palette-token-stats-active #app .v-main .astrbot-palette-token-metric {",
-            f"  border: 1px solid {border};",
+            "  border: 0;",
             "  border-radius: 14px;",
             "  display: grid;",
             "  gap: 8px;",
@@ -907,7 +903,7 @@ def _token_stats_detail_css() -> str:
             "}",
             "",
             "html.astrbot-palette-token-stats-active #app .v-main .astrbot-palette-token-model-row {",
-            f"  border: 1px solid {border};",
+            "  border: 0;",
             "  border-radius: 14px;",
             "  display: grid;",
             "  gap: 12px;",
@@ -944,7 +940,7 @@ def _token_stats_detail_css() -> str:
             "}",
             "",
             "html.astrbot-palette-token-stats-active #app .v-main .astrbot-palette-token-empty {",
-            f"  border: 1px dashed {border};",
+            "  border: 0;",
             "  border-radius: 14px;",
             "  color: rgba(var(--v-theme-on-surface), 0.72);",
             "  padding: 18px;",
