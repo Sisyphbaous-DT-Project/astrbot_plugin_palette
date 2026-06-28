@@ -3,10 +3,14 @@ from __future__ import annotations
 import base64
 import random
 from contextlib import suppress
+from collections import defaultdict
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Mapping, MutableMapping
 from urllib.parse import quote
 from uuid import uuid4
+
+from sqlmodel import col, select
 
 from astrbot.api.star import Context, Star, register
 from astrbot.api.web import (
@@ -88,6 +92,12 @@ class PalettePlugin(Star):
             self.get_background_thumbnail,
             ["GET"],
             "获取 AstrBot 调色盘背景缩略图",
+        )
+        context.register_web_api(
+            f"{ROUTE_PREFIX}/token-stats",
+            self.get_token_stats,
+            ["GET"],
+            "获取 AstrBot 调色盘模型 Token 明细统计",
         )
         context.register_web_api(
             f"{ROUTE_PREFIX}/upload-background",
@@ -378,6 +388,22 @@ class PalettePlugin(Star):
             }
         )
 
+    async def get_token_stats(self):
+        days = self._normalize_stats_days(request.query.get("days"))
+        try:
+            payload = await self._build_token_stats(days)
+        except Exception:
+            return json_response(
+                {
+                    "supported": False,
+                    "days": days,
+                    "totals": self._empty_token_totals(),
+                    "models": [],
+                    "message": "当前 AstrBot 版本暂不支持模型 Token 明细统计。",
+                }
+            )
+        return json_response(payload)
+
     async def get_background(self, filename: str):
         try:
             path = self._resolve_background(filename)
@@ -450,6 +476,10 @@ class PalettePlugin(Star):
                 False,
             ),
             "auto_theme_enabled": self._config_bool("auto_theme_enabled", True),
+            "detailed_token_stats_enabled": self._config_bool(
+                "detailed_token_stats_enabled",
+                False,
+            ),
             "theme_primary": normalize_hex_color(
                 self._config_str("theme_primary", "")
             ),
@@ -596,6 +626,13 @@ class PalettePlugin(Star):
             "auto_theme_enabled": self._normalize_bool(
                 payload.get("auto_theme_enabled", current["auto_theme_enabled"]),
                 current["auto_theme_enabled"],
+            ),
+            "detailed_token_stats_enabled": self._normalize_bool(
+                payload.get(
+                    "detailed_token_stats_enabled",
+                    current["detailed_token_stats_enabled"],
+                ),
+                current["detailed_token_stats_enabled"],
             ),
             "theme_primary": theme_primary,
             "theme_secondary": theme_secondary,
@@ -788,6 +825,117 @@ class PalettePlugin(Star):
         if not filename or filename in background_images:
             return list(background_images)
         return [*background_images, filename]
+
+    async def _build_token_stats(self, days: int) -> dict[str, Any]:
+        from astrbot.core.db.po import ProviderStat
+
+        db = self.context.get_db()
+        local_tz = datetime.now().astimezone().tzinfo or timezone.utc
+        now_local = datetime.now(local_tz)
+        range_start_local = (now_local - timedelta(days=days)).replace(
+            minute=0,
+            second=0,
+            microsecond=0,
+        )
+        query_start_utc = range_start_local.astimezone(timezone.utc)
+
+        async with db.get_db() as session:
+            result = await session.execute(
+                select(ProviderStat)
+                .where(
+                    ProviderStat.agent_type == "internal",
+                    ProviderStat.created_at >= query_start_utc,
+                )
+                .order_by(col(ProviderStat.created_at).desc())
+            )
+            records = result.scalars().all()
+
+        totals = self._empty_token_totals()
+        models: dict[str, dict[str, Any]] = defaultdict(self._empty_model_token_row)
+        for record in records:
+            provider_id = str(record.provider_id or "unknown")
+            provider_model = str(record.provider_model or "Unknown")
+            model_key = f"{provider_id}::{provider_model}"
+            input_tokens = int(record.token_input_other or 0)
+            cached_tokens = int(record.token_input_cached or 0)
+            output_tokens = int(record.token_output or 0)
+
+            row = models[model_key]
+            row["model_key"] = model_key
+            row["provider_id"] = provider_id
+            row["provider_model"] = provider_model
+            row["input_tokens"] += input_tokens
+            row["cached_tokens"] += cached_tokens
+            row["output_tokens"] += output_tokens
+            row["total_tokens"] += input_tokens + cached_tokens + output_tokens
+            row["calls"] += 1
+
+            totals["input_tokens"] += input_tokens
+            totals["cached_tokens"] += cached_tokens
+            totals["output_tokens"] += output_tokens
+            totals["total_tokens"] += input_tokens + cached_tokens + output_tokens
+            totals["calls"] += 1
+
+        for row in models.values():
+            row["cache_hit_rate"] = self._cache_hit_rate(
+                row["input_tokens"],
+                row["cached_tokens"],
+            )
+        totals["cache_hit_rate"] = self._cache_hit_rate(
+            totals["input_tokens"],
+            totals["cached_tokens"],
+        )
+
+        return {
+            "supported": True,
+            "days": days,
+            "totals": totals,
+            "models": sorted(
+                models.values(),
+                key=lambda item: item["total_tokens"],
+                reverse=True,
+            ),
+        }
+
+    @staticmethod
+    def _normalize_stats_days(value: Any) -> int:
+        try:
+            days = int(value)
+        except (TypeError, ValueError):
+            days = 1
+        return days if days in {1, 3, 7} else 1
+
+    @staticmethod
+    def _empty_token_totals() -> dict[str, int | float]:
+        return {
+            "input_tokens": 0,
+            "cached_tokens": 0,
+            "output_tokens": 0,
+            "total_tokens": 0,
+            "calls": 0,
+            "cache_hit_rate": 0.0,
+        }
+
+    @staticmethod
+    def _empty_model_token_row() -> dict[str, Any]:
+        return {
+            "model_key": "",
+            "provider_id": "unknown",
+            "provider_model": "Unknown",
+            "input_tokens": 0,
+            "cached_tokens": 0,
+            "output_tokens": 0,
+            "total_tokens": 0,
+            "calls": 0,
+            "cache_hit_rate": 0.0,
+        }
+
+    @staticmethod
+    def _cache_hit_rate(input_tokens: int, cached_tokens: int) -> float:
+        denominator = input_tokens + cached_tokens
+        if denominator <= 0:
+            return 0.0
+        return cached_tokens / denominator
 
     @staticmethod
     def _normalize_bool(value: Any, default: bool) -> bool:

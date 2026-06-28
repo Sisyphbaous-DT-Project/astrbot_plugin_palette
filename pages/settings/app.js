@@ -10,6 +10,7 @@ const saveButton = document.getElementById("save");
 const recalculateThemeButton = document.getElementById("recalculate-theme");
 const enabledInput = document.getElementById("enabled");
 const autoThemeInput = document.getElementById("auto-theme-enabled");
+const detailedTokenStatsInput = document.getElementById("detailed-token-stats-enabled");
 const randomBackgroundInput = document.getElementById("random-background-on-load");
 const fileInput = document.getElementById("background-file");
 const backgroundName = document.getElementById("background-name");
@@ -521,6 +522,7 @@ function configFromForm() {
     background_saturation: numberFromInput(saturationInput, 1),
     random_background_on_load: randomBackgroundInput.checked,
     auto_theme_enabled: autoThemeInput.checked,
+    detailed_token_stats_enabled: detailedTokenStatsInput.checked,
     theme_primary: currentConfig?.theme_primary || "",
     theme_secondary: currentConfig?.theme_secondary || "",
     advanced_css: advancedCssInput.value,
@@ -543,6 +545,7 @@ function applyForm(config) {
   saturationInput.value = String(config.background_saturation ?? 1);
   randomBackgroundInput.checked = Boolean(config.random_background_on_load);
   autoThemeInput.checked = config.auto_theme_enabled !== false;
+  detailedTokenStatsInput.checked = Boolean(config.detailed_token_stats_enabled);
   advancedCssInput.value = config.advanced_css || "";
   backgroundName.textContent = config.background_image || "未设置";
   syncCustomSelect(fitInput);
@@ -697,6 +700,7 @@ function renderStatus(status, config) {
     ["图库", `${config.background_images?.length || 0} 张`],
     ["随机", config.random_background_on_load ? "打开或刷新时随机" : "关闭"],
     ["主题色", config.auto_theme_enabled ? "自动同步" : "未同步"],
+    ["统计增强", config.detailed_token_stats_enabled ? "已启用" : "关闭"],
     ["主色", config.theme_primary || "未生成"],
     ["辅色", config.theme_secondary || "未生成"],
     ...injectionRows,

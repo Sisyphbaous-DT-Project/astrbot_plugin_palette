@@ -1,9 +1,9 @@
 name: astrbot_plugin_palette
 display_name: AstrBot调色盘
 author: C₂₂H₂₅NO₆
-version: "0.4.2"
+version: "0.4.3"
 desc: "AstrBot调色盘是一个 AstrBot WebUI 美化插件"
-short_desc: "WebUI 背景图库、透明化与主题色联动"
+short_desc: "WebUI 背景图库、透明化、主题色联动与统计增强"
 repo: "https://github.com/Sisyphbaous-DT-Project/astrbot_plugin_palette"
 astrbot_version: ">=4.26.0-beta1"
 pages:

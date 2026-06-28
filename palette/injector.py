@@ -529,6 +529,7 @@ def _build_injection_block() -> str:
     config_url = f"/api/v1/plugins/extensions/{PLUGIN_NAME}/config"
     random_select_url = f"/api/v1/plugins/extensions/{PLUGIN_NAME}/backgrounds/random-select"
     theme_url = f"/api/v1/plugins/extensions/{PLUGIN_NAME}/theme.css"
+    token_stats_url = f"/api/v1/plugins/extensions/{PLUGIN_NAME}/token-stats"
     return "\n".join(
         [
             "  " + INJECTION_START_MARKER,
@@ -536,7 +537,12 @@ def _build_injection_block() -> str:
                 '  <script id="astrbot-palette-bootstrap" '
                 f'data-version="{VERSION}">'
             ),
-            _build_bootstrap_script(config_url, random_select_url, theme_url),
+            _build_bootstrap_script(
+                config_url,
+                random_select_url,
+                theme_url,
+                token_stats_url,
+            ),
             "  </script>",
             "  " + INJECTION_END_MARKER,
         ]
@@ -547,19 +553,24 @@ def _build_bootstrap_script(
     config_url: str,
     random_select_url: str,
     theme_url: str,
+    token_stats_url: str,
 ) -> str:
     config_url_json = json.dumps(config_url)
     random_select_url_json = json.dumps(random_select_url)
     theme_url_json = json.dumps(theme_url)
+    token_stats_url_json = json.dumps(token_stats_url)
     return f"""(function () {{
     "use strict";
 
     var CONFIG_URL = {config_url_json};
     var RANDOM_SELECT_URL = {random_select_url_json};
     var THEME_URL = {theme_url_json};
+    var TOKEN_STATS_URL = {token_stats_url_json};
     var STYLE_ID = "astrbot-palette-theme";
     var THEME_COLOR_STYLE_ID = "astrbot-palette-theme-colors";
+    var TOKEN_STATS_PANEL_ID = "astrbot-palette-token-detail-panel";
     var ACTIVE_CLASS = "astrbot-palette-active";
+    var TOKEN_STATS_ACTIVE_CLASS = "astrbot-palette-token-stats-active";
     var DARK_THEME_BOOTSTRAP_KEY = "astrbot_palette_dark_theme_bootstrapped";
     var THEME_COLOR_ACTIVE_KEY = "astrbot_palette_theme_colors_active";
     var PREVIOUS_PRIMARY_KEY = "astrbot_palette_theme_previous_primary";
@@ -574,6 +585,15 @@ def _build_bootstrap_script(
     var restoredThemeStyleActive = false;
     var restoredThemePrimary = "";
     var restoredThemeSecondary = "";
+    var detailedTokenStatsEnabled = false;
+    var tokenStatsObserver = null;
+    var tokenStatsRefreshTimer = 0;
+    var tokenStatsPollTimer = 0;
+    var tokenStatsClickListenerReady = false;
+    var tokenStatsInFlight = false;
+    var tokenStatsLastFetchKey = "";
+    var tokenStatsLastFetchAt = 0;
+    var tokenStatsMutationMuted = false;
     var loading = false;
     var pendingRefresh = false;
     var initialRandomPending = true;
@@ -708,6 +728,7 @@ def _build_bootstrap_script(
 
     function setInactive() {{
       document.documentElement.classList.remove(ACTIVE_CLASS);
+      document.documentElement.classList.remove(TOKEN_STATS_ACTIVE_CLASS);
       document.documentElement.removeAttribute("data-astrbot-palette-text-mode");
       [
         "--astrbot-palette-background-image",
@@ -728,6 +749,7 @@ def _build_bootstrap_script(
       lastBackgroundUrl = "";
       revokeObjectUrl();
       restoreThemeColors();
+      stopTokenStatsEnhancement();
     }}
 
     function clampNumber(value, minimum, maximum, fallback) {{
@@ -946,8 +968,16 @@ def _build_bootstrap_script(
       root.style.setProperty("--astrbot-palette-background-contrast", String(clampNumber(config.background_contrast, 0.5, 1.5, 1)));
       root.style.setProperty("--astrbot-palette-background-saturation", String(clampNumber(config.background_saturation, 0, 2, 1)));
       root.setAttribute("data-astrbot-palette-text-mode", config.text_enhancement_mode || "soft_shadow");
-      root.classList.toggle(ACTIVE_CLASS, Boolean(config.enabled && imageUrl));
+      root.classList.toggle(
+        ACTIVE_CLASS,
+        Boolean(config.enabled && imageUrl)
+      );
+      root.classList.toggle(
+        TOKEN_STATS_ACTIVE_CLASS,
+        Boolean(config.enabled && config.detailed_token_stats_enabled)
+      );
       applyThemeColors(config);
+      updateTokenStatsEnhancement(Boolean(config.detailed_token_stats_enabled));
     }}
 
     async function fetchText(url, token) {{
@@ -972,6 +1002,292 @@ def _build_bootstrap_script(
         throw new Error("HTTP " + response.status);
       }}
       return response.json();
+    }}
+
+    function getCurrentStatsRange() {{
+      var activeChip = document.querySelector(".stats-page .range-chip.active");
+      var label = activeChip ? (activeChip.textContent || "") : "";
+      if (/7|周|week/i.test(label)) {{
+        return 7;
+      }}
+      if (/3|three/i.test(label)) {{
+        return 3;
+      }}
+      return 1;
+    }}
+
+    function formatTokenNumber(value) {{
+      var number = Number(value || 0);
+      try {{
+        return new Intl.NumberFormat(document.documentElement.lang || navigator.language || "zh-CN").format(number);
+      }} catch (_) {{
+        return String(Math.round(number));
+      }}
+    }}
+
+    function formatTokenRate(value) {{
+      var number = Number(value || 0);
+      if (!Number.isFinite(number) || number <= 0) {{
+        return "0.0%";
+      }}
+      return (number * 100).toFixed(1) + "%";
+    }}
+
+    function clearTokenStatsPanel() {{
+      var panel = document.getElementById(TOKEN_STATS_PANEL_ID);
+      if (panel) {{
+        panel.remove();
+      }}
+    }}
+
+    function stopTokenStatsEnhancement() {{
+      detailedTokenStatsEnabled = false;
+      clearTokenStatsPanel();
+      document.documentElement.classList.remove(TOKEN_STATS_ACTIVE_CLASS);
+      tokenStatsLastFetchKey = "";
+      tokenStatsLastFetchAt = 0;
+      tokenStatsInFlight = false;
+      tokenStatsMutationMuted = false;
+      if (tokenStatsRefreshTimer) {{
+        window.clearTimeout(tokenStatsRefreshTimer);
+        tokenStatsRefreshTimer = 0;
+      }}
+      if (tokenStatsPollTimer) {{
+        window.clearInterval(tokenStatsPollTimer);
+        tokenStatsPollTimer = 0;
+      }}
+      if (tokenStatsObserver) {{
+        tokenStatsObserver.disconnect();
+        tokenStatsObserver = null;
+      }}
+    }}
+
+    function updateTokenStatsEnhancement(enabled) {{
+      if (!enabled) {{
+        stopTokenStatsEnhancement();
+        return;
+      }}
+      detailedTokenStatsEnabled = true;
+      ensureTokenStatsObserver();
+      ensureTokenStatsClickListener();
+      scheduleTokenStatsRefresh(120);
+    }}
+
+    function ensureTokenStatsObserver() {{
+      if (tokenStatsObserver) {{
+        return;
+      }}
+      tokenStatsObserver = new MutationObserver(function () {{
+        if (!detailedTokenStatsEnabled || tokenStatsMutationMuted) {{
+          return;
+        }}
+        scheduleTokenStatsRefresh(240);
+      }});
+      tokenStatsObserver.observe(document.body, {{
+        childList: true,
+        subtree: true,
+      }});
+      tokenStatsPollTimer = window.setInterval(function () {{
+        if (detailedTokenStatsEnabled) {{
+          scheduleTokenStatsRefresh(0);
+        }}
+      }}, 60000);
+    }}
+
+    function ensureTokenStatsClickListener() {{
+      if (tokenStatsClickListenerReady) {{
+        return;
+      }}
+      tokenStatsClickListenerReady = true;
+      document.addEventListener("click", function (event) {{
+        if (!detailedTokenStatsEnabled) {{
+          return;
+        }}
+        var target = event.target && event.target.closest ? event.target.closest(".stats-page .range-chip") : null;
+        if (target) {{
+          scheduleTokenStatsRefresh(520, true);
+        }}
+      }}, true);
+    }}
+
+    function scheduleTokenStatsRefresh(delay, force) {{
+      if (!detailedTokenStatsEnabled) {{
+        return;
+      }}
+      if (tokenStatsRefreshTimer) {{
+        window.clearTimeout(tokenStatsRefreshTimer);
+      }}
+      tokenStatsRefreshTimer = window.setTimeout(function () {{
+        tokenStatsRefreshTimer = 0;
+        refreshTokenStatsPanel(Boolean(force));
+      }}, delay || 0);
+    }}
+
+    function shouldShowTokenStatsPanel() {{
+      return Boolean(document.querySelector(".stats-page .token-grid"));
+    }}
+
+    function ensureTokenStatsPanel() {{
+      var tokenGrid = document.querySelector(".stats-page .token-grid");
+      if (!tokenGrid) {{
+        clearTokenStatsPanel();
+        return null;
+      }}
+      var panel = document.getElementById(TOKEN_STATS_PANEL_ID);
+      if (!panel) {{
+        panel = document.createElement("section");
+        panel.id = TOKEN_STATS_PANEL_ID;
+        panel.className = "stat-card astrbot-palette-token-detail-panel";
+      }}
+      if (panel.parentElement !== tokenGrid.parentElement || panel.previousElementSibling !== tokenGrid) {{
+        tokenStatsMutationMuted = true;
+        tokenGrid.insertAdjacentElement("afterend", panel);
+        window.setTimeout(function () {{
+          tokenStatsMutationMuted = false;
+        }}, 0);
+      }}
+      return panel;
+    }}
+
+    function renderTokenStatsLoading(panel) {{
+      panel.innerHTML = [
+        '<div class="astrbot-palette-token-detail-head">',
+        '  <div>',
+        '    <div class="section-title">模型 Token 明细</div>',
+        '    <div class="section-subtitle">正在读取每个模型的输入、输出与缓存命中。</div>',
+        '  </div>',
+        '</div>',
+        '<div class="astrbot-palette-token-empty">正在加载...</div>',
+      ].join("");
+    }}
+
+    function renderTokenStatsUnavailable(panel, message) {{
+      panel.innerHTML = [
+        '<div class="astrbot-palette-token-detail-head">',
+        '  <div>',
+        '    <div class="section-title">模型 Token 明细</div>',
+        '    <div class="section-subtitle">当前环境无法读取模型 Token 明细。</div>',
+        '  </div>',
+        '</div>',
+        '<div class="astrbot-palette-token-empty">' + escapeHtml(message || "当前 AstrBot 版本暂不支持。") + '</div>',
+      ].join("");
+    }}
+
+    function renderTokenStatsPanel(panel, data, range) {{
+      if (!data || data.supported === false) {{
+        renderTokenStatsUnavailable(panel, data && data.message);
+        return;
+      }}
+      var totals = data.totals || {{}};
+      var models = Array.isArray(data.models) ? data.models : [];
+      var modelRows = models.length
+        ? models.map(function (model) {{
+            return [
+              '<div class="astrbot-palette-token-model-row">',
+              '  <div class="astrbot-palette-token-model-name">',
+              '    <strong>' + escapeHtml(model.provider_model || "Unknown") + '</strong>',
+              '    <span>' + escapeHtml(model.provider_id || "unknown") + '</span>',
+              '  </div>',
+              '  <span>' + formatTokenNumber(model.calls) + '</span>',
+              '  <span>' + formatTokenNumber(model.input_tokens) + '</span>',
+              '  <span>' + formatTokenNumber(model.output_tokens) + '</span>',
+              '  <span>' + formatTokenNumber(model.cached_tokens) + '</span>',
+              '  <strong>' + formatTokenRate(model.cache_hit_rate) + '</strong>',
+              '</div>',
+            ].join("");
+          }}).join("")
+        : '<div class="astrbot-palette-token-empty">这个时间范围内还没有模型 Token 记录。</div>';
+      panel.innerHTML = [
+        '<div class="astrbot-palette-token-detail-head">',
+        '  <div>',
+        '    <div class="section-title">模型 Token 明细</div>',
+        '    <div class="section-subtitle">最近 ' + formatTokenNumber(range) + ' 天，每个模型的输入、输出与缓存命中。</div>',
+        '  </div>',
+        '  <div class="astrbot-palette-token-range">跟随系统统计范围</div>',
+        '</div>',
+        '<div class="astrbot-palette-token-total-grid">',
+        tokenMetricHtml("总 Token", totals.total_tokens),
+        tokenMetricHtml("输入", totals.input_tokens),
+        tokenMetricHtml("输出", totals.output_tokens),
+        tokenMetricHtml("缓存命中", totals.cached_tokens),
+        tokenMetricHtml("命中率", formatTokenRate(totals.cache_hit_rate), true),
+        '</div>',
+        '<div class="astrbot-palette-token-model-table">',
+        '  <div class="astrbot-palette-token-model-row astrbot-palette-token-model-head">',
+        '    <span>模型</span><span>调用</span><span>输入</span><span>输出</span><span>缓存命中</span><span>命中率</span>',
+        '  </div>',
+        modelRows,
+        '</div>',
+      ].join("");
+    }}
+
+    function tokenMetricHtml(label, value, raw) {{
+      return [
+        '<div class="astrbot-palette-token-metric">',
+        '  <span>' + escapeHtml(label) + '</span>',
+        '  <strong>' + escapeHtml(raw ? String(value) : formatTokenNumber(value)) + '</strong>',
+        '</div>',
+      ].join("");
+    }}
+
+    async function refreshTokenStatsPanel(force) {{
+      if (!detailedTokenStatsEnabled) {{
+        return;
+      }}
+      if (!shouldShowTokenStatsPanel()) {{
+        clearTokenStatsPanel();
+        return;
+      }}
+      var range = getCurrentStatsRange();
+      var fetchKey = range + ":" + getToken();
+      var now = Date.now();
+      if (!force && fetchKey === tokenStatsLastFetchKey && now - tokenStatsLastFetchAt < 5000) {{
+        return;
+      }}
+      if (tokenStatsInFlight) {{
+        return;
+      }}
+      var panel = ensureTokenStatsPanel();
+      if (!panel) {{
+        return;
+      }}
+      tokenStatsInFlight = true;
+      if (!panel.dataset.loaded) {{
+        renderTokenStatsLoading(panel);
+      }}
+      try {{
+        var token = getToken();
+        var data = await fetchJson(TOKEN_STATS_URL + "?days=" + range, token);
+        renderTokenStatsPanel(panel, data, range);
+        panel.dataset.loaded = "1";
+        tokenStatsLastFetchKey = fetchKey;
+        tokenStatsLastFetchAt = Date.now();
+      }} catch (error) {{
+        if (!isExpectedAuthFailure(error)) {{
+          console.warn("[AstrBot调色盘] 模型 Token 明细读取失败：", error);
+        }}
+        tokenStatsLastFetchKey = fetchKey;
+        tokenStatsLastFetchAt = Date.now();
+        tokenStatsMutationMuted = true;
+        renderTokenStatsUnavailable(panel, "读取失败，请稍后重试。");
+        window.setTimeout(function () {{
+          tokenStatsMutationMuted = false;
+        }}, 0);
+      }} finally {{
+        tokenStatsInFlight = false;
+      }}
+    }}
+
+    function escapeHtml(value) {{
+      return String(value == null ? "" : value).replace(/[&<>"']/g, function (char) {{
+        return {{
+          "&": "&amp;",
+          "<": "&lt;",
+          ">": "&gt;",
+          '"': "&quot;",
+          "'": "&#39;",
+        }}[char] || char;
+      }});
     }}
 
     async function postJson(url, token, body) {{
@@ -1059,7 +1375,7 @@ def _build_bootstrap_script(
           Boolean(options && options.allowInitialRandom) || initialRandomPending
         );
 
-        if (!config.enabled || !config.background_url) {{
+        if (!config.enabled) {{
           setInactive();
           removeStyleElement();
           return;
@@ -1067,12 +1383,17 @@ def _build_bootstrap_script(
 
         var css = await fetchText(THEME_URL, token);
         var imageUrl = "";
-        try {{
-          imageUrl = await fetchBackground(config.background_url, token);
-        }} catch (error) {{
-          setInactive();
-          removeStyleElement();
-          throw error;
+        if (config.background_url) {{
+          try {{
+            imageUrl = await fetchBackground(config.background_url, token);
+          }} catch (error) {{
+            setInactive();
+            removeStyleElement();
+            throw error;
+          }}
+        }} else {{
+          lastBackgroundUrl = "";
+          revokeObjectUrl();
         }}
         ensureStyleElement(css);
         applyConfig(config, imageUrl);

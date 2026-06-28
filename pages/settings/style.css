@@ -528,6 +528,34 @@ textarea::before,
   gap: 26px;
 }
 
+.advanced-section {
+  align-items: center;
+  display: flex;
+  gap: 22px;
+  justify-content: space-between;
+  min-width: 0;
+}
+
+.advanced-section h3,
+.advanced-section p {
+  margin: 0;
+}
+
+.advanced-section h3 {
+  color: var(--ab-ink);
+  font-size: 18px;
+  font-weight: 760;
+  letter-spacing: 0;
+}
+
+.advanced-section p:not(.eyebrow) {
+  color: var(--ab-ink-soft);
+  font-size: 13px;
+  line-height: 1.7;
+  margin-top: 8px;
+  text-shadow: var(--lg-text-shadow);
+}
+
 .preview-panel {
   display: grid;
   gap: 18px;
@@ -1342,6 +1370,11 @@ dd {
   .control-grid,
   .theme-color-grid {
     grid-template-columns: 1fr;
+  }
+
+  .advanced-section {
+    align-items: flex-start;
+    flex-direction: column;
   }
 
   .preview-panel {

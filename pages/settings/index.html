@@ -479,13 +479,28 @@
             <div class="tab-hero">
               <div>
                 <p class="eyebrow">Overrides</p>
-                <h2>高级 CSS</h2>
-                <p>给熟悉 CSS 的用户保留最后一层控制权。</p>
+                <h2>高级设置</h2>
+                <p>控制 Dashboard 增强和高级 CSS 覆盖。</p>
               </div>
             </div>
 
             <div class="settings-preview-layout">
               <section class="panel-block panel-block--airy">
+                <div class="advanced-section">
+                  <div>
+                    <p class="eyebrow">Dashboard Enhancements</p>
+                    <h3>系统统计增强</h3>
+                    <p>开启后会在 AstrBot 系统统计页追加模型 Token 明细面板；旧版统计数据不可用时会显示不可用状态。</p>
+                  </div>
+                  <label class="switch">
+                    <input
+                      id="detailed-token-stats-enabled"
+                      name="detailed_token_stats_enabled"
+                      type="checkbox"
+                    />
+                    <span>系统统计模型 Token 明细</span>
+                  </label>
+                </div>
                 <label class="css-editor-label" for="advanced-css">
                   <span>
                     高级 CSS

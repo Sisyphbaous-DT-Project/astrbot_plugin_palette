@@ -100,6 +100,12 @@
     "default": true,
     "hint": "开启后会读取当前壁纸主题色，并写入 AstrBot 的主色和辅色。"
   },
+  "detailed_token_stats_enabled": {
+    "description": "系统统计模型 Token 明细",
+    "type": "bool",
+    "default": false,
+    "hint": "开启后会在 AstrBot 系统统计页追加每个模型的输入、输出、缓存命中与命中率。"
+  },
   "theme_primary": {
     "description": "自动生成的主色",
     "type": "string",
