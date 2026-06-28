@@ -1137,7 +1137,7 @@ def _build_bootstrap_script(
       if (!panel) {{
         panel = document.createElement("section");
         panel.id = TOKEN_STATS_PANEL_ID;
-        panel.className = "stat-card astrbot-palette-token-detail-panel";
+        panel.className = "astrbot-palette-token-detail-panel";
       }}
       if (panel.parentElement !== tokenGrid.parentElement || panel.previousElementSibling !== tokenGrid) {{
         tokenStatsMutationMuted = true;
