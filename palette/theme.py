@@ -67,7 +67,7 @@ def build_theme_css(config: dict[str, Any]) -> str:
 
     return "\n".join(
         [
-            "/* AstrBot调色盘 0.4.4 运行时主题 CSS */",
+            "/* AstrBot调色盘 0.4.5 运行时主题 CSS */",
             ":root {",
             f"  --astrbot-palette-enabled: {enabled};",
             "  --astrbot-palette-background-image: none;",
@@ -120,7 +120,7 @@ def build_theme_css(config: dict[str, Any]) -> str:
             "  background-size: var(--astrbot-palette-background-fit, cover);",
             f"  filter: {background_filter};",
             f"  transform: {background_transform};",
-            "  transition: opacity 450ms ease;",
+            "  transition: opacity 650ms cubic-bezier(0.22, 1, 0.36, 1);",
             "  will-change: opacity;",
             "}",
             "",

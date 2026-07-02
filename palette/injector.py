@@ -586,8 +586,10 @@ def _build_bootstrap_script(
     var currentBackgroundUrl = "";
     var currentObjectUrl = "";
     var backgroundObjectUrlCache = {{}};
+    var backgroundDecodedUrlCache = {{}};
     var backgroundActiveLayer = null;
     var backgroundRequestSeq = 0;
+    var backgroundTransitionToken = 0;
     var backgroundResizeTimer = 0;
     var lastConfig = null;
     var restoredThemeStyleActive = false;
@@ -735,6 +737,7 @@ def _build_bootstrap_script(
         }}
       }});
       backgroundObjectUrlCache = {{}};
+      backgroundDecodedUrlCache = {{}};
       lastBackgroundUrl = "";
       lastBackgroundObjectUrl = "";
       currentBackgroundUrl = "";
@@ -781,7 +784,41 @@ def _build_bootstrap_script(
       return config.landscape_background_url || config.background_url || config.portrait_background_url || config.fallback_background_url || "";
     }}
 
-    function applyBackgroundLayer(objectUrl, animate) {{
+    function nextBackgroundFrame() {{
+      return new Promise(function (resolve) {{
+        window.requestAnimationFrame(function () {{
+          window.requestAnimationFrame(resolve);
+        }});
+      }});
+    }}
+
+    function decodeBackgroundImage(objectUrl) {{
+      if (!objectUrl) {{
+        return Promise.resolve();
+      }}
+      if (backgroundDecodedUrlCache[objectUrl]) {{
+        return backgroundDecodedUrlCache[objectUrl];
+      }}
+      var promise = new Promise(function (resolve) {{
+        var image = new Image();
+        var done = function () {{
+          resolve();
+        }};
+        image.onload = function () {{
+          if (image.decode) {{
+            image.decode().then(done).catch(done);
+          }} else {{
+            done();
+          }}
+        }};
+        image.onerror = done;
+        image.src = objectUrl;
+      }});
+      backgroundDecodedUrlCache[objectUrl] = promise;
+      return promise;
+    }}
+
+    async function applyBackgroundLayer(objectUrl, animate, isCurrent) {{
       var container = ensureBackgroundContainer();
       var layers = container.querySelectorAll(".astrbot-palette-background-layer");
       if (layers.length < 2) {{
@@ -805,16 +842,33 @@ def _build_bootstrap_script(
       }}
       nextLayer.style.backgroundImage = objectUrl ? 'url("' + objectUrl + '")' : "none";
       if (animate && currentLayer && currentLayer !== nextLayer) {{
+        var transitionToken = backgroundTransitionToken + 1;
+        backgroundTransitionToken = transitionToken;
+        nextLayer.classList.remove("is-active");
         container.appendChild(nextLayer);
+        void nextLayer.offsetWidth;
+        await nextBackgroundFrame();
+        if (
+          backgroundTransitionToken !== transitionToken ||
+          (isCurrent && !isCurrent())
+        ) {{
+          nextLayer.classList.remove("is-active");
+          nextLayer.style.backgroundImage = "none";
+          return false;
+        }}
         nextLayer.classList.add("is-active");
         currentLayer.classList.remove("is-active");
         backgroundActiveLayer = nextLayer;
         window.setTimeout(function () {{
-          if (!currentLayer.classList.contains("is-active")) {{
+          if (
+            backgroundTransitionToken === transitionToken &&
+            !currentLayer.classList.contains("is-active")
+          ) {{
             currentLayer.style.backgroundImage = "none";
           }}
-        }}, 520);
+        }}, 760);
       }} else {{
+        backgroundTransitionToken += 1;
         container.appendChild(nextLayer);
         Array.prototype.forEach.call(layers, function (layer) {{
           var isNextLayer = layer === nextLayer;
@@ -825,6 +879,7 @@ def _build_bootstrap_script(
         }});
         backgroundActiveLayer = nextLayer;
       }}
+      return true;
     }}
 
     function setInactive() {{
@@ -1448,12 +1503,12 @@ def _build_bootstrap_script(
       if (!backgroundUrl) {{
         currentBackgroundUrl = "";
         currentObjectUrl = "";
-        applyBackgroundLayer("", false);
+        await applyBackgroundLayer("", false);
         applyConfig(config, "");
         return "";
       }}
       if (backgroundUrl === currentBackgroundUrl && currentObjectUrl) {{
-        applyBackgroundLayer(currentObjectUrl, false);
+        await applyBackgroundLayer(currentObjectUrl, false);
         applyConfig(config, currentObjectUrl);
         return currentObjectUrl;
       }}
@@ -1466,15 +1521,24 @@ def _build_bootstrap_script(
         }}
         throw error;
       }}
+      await decodeBackgroundImage(imageUrl);
       if (
         requestSeq !== backgroundRequestSeq ||
         pickBackgroundUrl(config, getViewportOrientation()) !== backgroundUrl
       ) {{
         return currentObjectUrl || "";
       }}
+      var applied = await applyBackgroundLayer(imageUrl, Boolean(animate), function () {{
+        return (
+          requestSeq === backgroundRequestSeq &&
+          pickBackgroundUrl(config, getViewportOrientation()) === backgroundUrl
+        );
+      }});
+      if (!applied) {{
+        return currentObjectUrl || "";
+      }}
       currentBackgroundUrl = backgroundUrl;
       currentObjectUrl = imageUrl;
-      applyBackgroundLayer(imageUrl, Boolean(animate));
       applyConfig(config, imageUrl);
       return imageUrl;
     }}
