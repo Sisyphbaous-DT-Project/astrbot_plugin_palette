@@ -2,14 +2,15 @@
 
 AstrBot调色盘是一个 AstrBot WebUI 美化插件。当前版本聚焦于背景图库、透明界面、Liquid Glass 设置页、文字可读性增强和壁纸主题色联动，让 Dashboard 可以在不修改 AstrBot 源码的前提下换上自定义壁纸。
 
-> 当前版本：`0.4.3`
+> 当前版本：`0.4.4`
 >
 > 兼容 AstrBot：`>=4.26.0-beta1`
 
 ## 功能
 
-- 上传多张 WebUI 背景图片，并通过真实压缩缩略图库一键切换。
-- 支持打开或刷新 WebUI 时从图库随机切换背景。
+- 分别上传横屏和竖屏 WebUI 背景图片，并通过真实压缩缩略图库一键切换。
+- 支持横屏/竖屏设备自动使用对应壁纸，旋转或拖拽改变方向时会叠化切换。
+- 支持打开或刷新 WebUI 时从当前方向图库随机切换背景。
 - 调整背景填充方式、位置、遮罩、模糊、灰度、亮度、对比度和饱和度。
 - 将 Dashboard 常驻面板透明化，支持完全透明的悬浮文字效果。
 - 提供文字和图标可读性增强，包括柔和阴影和强力描边。
@@ -49,15 +50,15 @@ git clone https://github.com/Sisyphbaous-DT-Project/astrbot_plugin_palette.git
 
 - 插件名：`astrbot_plugin_palette`
 - 展示名：`AstrBot调色盘`
-- 版本：`0.4.3`
+- 版本：`0.4.4`
 
 ## 使用
 
 1. 打开 AstrBot WebUI。
 2. 进入插件管理，找到 `AstrBot调色盘`。
 3. 打开插件设置页。
-4. 上传一张或多张背景图片。
-5. 在缩略图库中点击图片，切换当前 WebUI 背景。
+4. 分别在横屏图库或竖屏图库上传一张或多张背景图片。
+5. 在对应缩略图库中点击图片，切换该方向的当前 WebUI 背景。
 6. 按喜好调整透明度、遮罩、背景滤镜、文字增强、随机背景和主题色联动。
 7. 保存后刷新 WebUI，背景会自动应用到 Dashboard。
 
@@ -78,6 +79,10 @@ git clone https://github.com/Sisyphbaous-DT-Project/astrbot_plugin_palette.git
 | `enabled` | 是否启用 WebUI 美化 | `true` |
 | `background_image` | 当前背景图片文件名 | `""` |
 | `background_images` | 背景图库文件名列表 | `[]` |
+| `landscape_background_image` | 横屏当前背景图片文件名 | `""` |
+| `landscape_background_images` | 横屏背景图库文件名列表 | `[]` |
+| `portrait_background_image` | 竖屏当前背景图片文件名 | `""` |
+| `portrait_background_images` | 竖屏背景图库文件名列表 | `[]` |
 | `background_fit` | 背景填充方式，可选 `cover`、`contain`、`stretch`、`auto` | `cover` |
 | `background_position` | 背景位置 | `center center` |
 | `background_blur` | 背景模糊强度，单位 px | `0` |
@@ -113,11 +118,17 @@ themeSecondary
 
 ## 背景图库
 
-上传图片只会加入图库，不会自动切换当前背景。点击缩略图后，插件会把该图片保存为当前背景，并重新读取主题色。
+上传图片会加入对应方向图库；如果该方向还没有当前背景，第一张上传图片会自动作为当前方向背景。已有当前背景时，上传不会打断正在使用的壁纸。点击缩略图后，插件会把该图片保存为对应方向的当前背景，并重新读取主题色。
+
+`0.4.4` 起，背景图库分为横屏壁纸和竖屏壁纸。上传到横屏分区的图片会在电脑或横屏视口优先显示；上传到竖屏分区的图片会在手机或竖屏视口优先显示。插件不会按图片尺寸自动分类，图片属于哪个方向完全由上传入口决定。
+
+旧版单图库配置会默认显示在横屏图库里；竖屏图库为空时仍会自动回退到旧背景。删除背景图片会删除这个文件在横屏、竖屏和旧图库里的所有引用，避免配置里留下已经不存在的图片。
+
+Dashboard 会监听视口方向变化。浏览器从竖屏切到横屏时，会预加载横屏当前壁纸并以叠化方式切换；横屏切回竖屏时同理。如果某个方向还没有壁纸，会自动回退到旧背景或另一方向壁纸，避免黑屏。
 
 `0.4.1` 起，图库缩略图会在上传时或首次访问时生成最大边 `320px` 的压缩缓存。设置页图库和效果预览只加载小图，不再把原图 base64 当缩略图或预览图使用，因此云端部署和多张 4K 壁纸场景下打开设置页会更轻。Dashboard 实际背景仍使用原图，不影响最终壁纸质量。
 
-开启“打开或刷新时随机背景”后，Dashboard 每次重新打开或整页刷新都会从图库随机选一张，并写回当前背景。页面内路由切换不会触发随机，避免使用过程中频繁换图。
+开启“打开或刷新时随机背景”后，Dashboard 每次重新打开或整页刷新都会从当前方向图库随机选一张，并写回该方向当前背景。页面内路由切换和横竖屏旋转不会触发再次随机，避免使用过程中频繁换图。
 
 “拉伸铺满”会让图片完整铺满窗口且不裁切，但可能改变原图比例。
 
@@ -187,6 +198,7 @@ data/plugin_data/astrbot_plugin_palette/dashboard_backups
 | `GET` | `/astrbot_plugin_palette/background-thumbnail` | 获取图库压缩缩略图 |
 | `GET` | `/astrbot_plugin_palette/token-stats` | 获取模型 Token 明细统计 |
 | `POST` | `/astrbot_plugin_palette/upload-background` | 上传背景图片到图库 |
+| `POST` | `/astrbot_plugin_palette/upload-background/<orientation>` | 上传背景图片到横屏或竖屏图库 |
 | `POST` | `/astrbot_plugin_palette/backgrounds/select` | 切换当前背景图片 |
 | `POST` | `/astrbot_plugin_palette/backgrounds/delete` | 删除图库背景图片 |
 | `POST` | `/astrbot_plugin_palette/backgrounds/random-select` | 随机切换并写回当前背景 |

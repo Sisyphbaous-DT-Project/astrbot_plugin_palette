@@ -108,22 +108,6 @@
 
             <div class="gallery-layout">
               <section class="panel-block panel-block--airy">
-                <label class="upload-box" for="background-file">
-                  <input
-                    id="background-file"
-                    accept="image/jpeg,image/png,image/webp,image/gif"
-                    multiple
-                    type="file"
-                  />
-                  <span>选择图片</span>
-                  <small>支持 jpg、png、webp、gif，最大 10MB</small>
-                </label>
-
-                <div class="current-file">
-                  <span>当前图片</span>
-                  <strong id="background-name">未设置</strong>
-                </div>
-
                 <div class="gallery-toolbar">
                   <span>背景图库</span>
                   <label class="switch">
@@ -135,8 +119,65 @@
                     <span>打开或刷新时随机</span>
                   </label>
                 </div>
-                <div id="background-gallery" class="background-gallery" aria-live="polite">
-                  <p class="gallery-empty">图库里还没有图片。</p>
+                <div class="orientation-preview-toggle" role="group" aria-label="预览方向">
+                  <button class="is-active" type="button" data-preview-orientation="landscape">
+                    横屏预览
+                  </button>
+                  <button type="button" data-preview-orientation="portrait">
+                    竖屏预览
+                  </button>
+                </div>
+
+                <div class="orientation-gallery" data-orientation-panel="landscape">
+                  <div class="current-file">
+                    <span>横屏当前图片</span>
+                    <strong id="landscape-background-name">未设置</strong>
+                  </div>
+                  <label class="upload-box" for="landscape-background-file">
+                    <input
+                      id="landscape-background-file"
+                      accept="image/jpeg,image/png,image/webp,image/gif"
+                      data-upload-orientation="landscape"
+                      multiple
+                      type="file"
+                    />
+                    <span>上传横屏壁纸</span>
+                    <small>电脑或横屏视口优先显示</small>
+                  </label>
+                  <div
+                    id="landscape-background-gallery"
+                    class="background-gallery"
+                    data-gallery-orientation="landscape"
+                    aria-live="polite"
+                  >
+                    <p class="gallery-empty">横屏图库里还没有图片。</p>
+                  </div>
+                </div>
+
+                <div class="orientation-gallery" data-orientation-panel="portrait">
+                  <div class="current-file">
+                    <span>竖屏当前图片</span>
+                    <strong id="portrait-background-name">未设置</strong>
+                  </div>
+                  <label class="upload-box" for="portrait-background-file">
+                    <input
+                      id="portrait-background-file"
+                      accept="image/jpeg,image/png,image/webp,image/gif"
+                      data-upload-orientation="portrait"
+                      multiple
+                      type="file"
+                    />
+                    <span>上传竖屏壁纸</span>
+                    <small>手机或竖屏视口优先显示</small>
+                  </label>
+                  <div
+                    id="portrait-background-gallery"
+                    class="background-gallery"
+                    data-gallery-orientation="portrait"
+                    aria-live="polite"
+                  >
+                    <p class="gallery-empty">竖屏图库里还没有图片。</p>
+                  </div>
                 </div>
               </section>
 

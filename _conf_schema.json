@@ -20,6 +20,36 @@
     "default": [],
     "hint": "由插件设置页维护的背景图片文件名列表。"
   },
+  "landscape_background_image": {
+    "description": "横屏背景图片路径",
+    "type": "string",
+    "default": "",
+    "hint": "横屏设备或横屏视口优先使用的背景图片文件名。"
+  },
+  "landscape_background_images": {
+    "description": "横屏背景图库",
+    "type": "list",
+    "items": {
+      "type": "string"
+    },
+    "default": [],
+    "hint": "上传到横屏分区的背景图片文件名列表。"
+  },
+  "portrait_background_image": {
+    "description": "竖屏背景图片路径",
+    "type": "string",
+    "default": "",
+    "hint": "竖屏设备或竖屏视口优先使用的背景图片文件名。"
+  },
+  "portrait_background_images": {
+    "description": "竖屏背景图库",
+    "type": "list",
+    "items": {
+      "type": "string"
+    },
+    "default": [],
+    "hint": "上传到竖屏分区的背景图片文件名列表。"
+  },
   "background_fit": {
     "description": "背景填充方式",
     "type": "string",

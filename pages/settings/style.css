@@ -699,6 +699,37 @@ dt {
   text-shadow: var(--lg-text-shadow);
 }
 
+.orientation-preview-toggle {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.orientation-preview-toggle button {
+  background: transparent;
+  border-radius: 999px;
+  box-shadow: none;
+  color: var(--ab-ink-muted);
+  min-height: 34px;
+  padding: 6px 12px;
+}
+
+.orientation-preview-toggle button.is-active {
+  box-shadow: var(--lg-rim-soft);
+  color: var(--ab-ink);
+  font-weight: 760;
+}
+
+.orientation-gallery {
+  display: grid;
+  gap: 18px;
+}
+
+.orientation-gallery + .orientation-gallery {
+  margin-top: 8px;
+  padding-top: 20px;
+}
+
 .background-gallery {
   display: grid;
   gap: 16px;

@@ -39,6 +39,9 @@ from .palette.thumbnails import (
     ensure_background_thumbnail,
 )
 
+BACKGROUND_ORIENTATIONS = {"landscape", "portrait"}
+BACKGROUND_POOLS = {"legacy", *BACKGROUND_ORIENTATIONS}
+
 
 @register(PLUGIN_NAME, AUTHOR, DESCRIPTION, VERSION)
 class PalettePlugin(Star):
@@ -106,6 +109,12 @@ class PalettePlugin(Star):
             "上传 AstrBot 调色盘背景图片",
         )
         context.register_web_api(
+            f"{ROUTE_PREFIX}/upload-background/<orientation>",
+            self.upload_background_for_orientation,
+            ["POST"],
+            "上传 AstrBot 调色盘指定方向背景图片",
+        )
+        context.register_web_api(
             f"{ROUTE_PREFIX}/backgrounds/select",
             self.select_background,
             ["POST"],
@@ -169,21 +178,36 @@ class PalettePlugin(Star):
         )
 
     async def upload_background(self):
+        return await self._upload_background_for_orientation("landscape")
+
+    async def upload_background_for_orientation(self, orientation: str):
+        return await self._upload_background_for_orientation(orientation)
+
+    async def _upload_background_for_orientation(self, orientation: Any):
+        form = await request.form()
         files = await request.files()
         upload_file = files.get("file")
         if upload_file is None:
             return error_response("请选择要上传的背景图片。")
+        normalized_orientation = self._normalize_background_orientation(
+            orientation or request.query.get("orientation") or form.get("orientation"),
+            default="landscape",
+        )
+        if normalized_orientation == "legacy":
+            normalized_orientation = "landscape"
 
         try:
             saved_filename = await self._save_background_upload(upload_file)
             config = self._normalize_config(self._public_config())
+            current_key, images_key = self._background_pool_keys(normalized_orientation)
             background_images = self._append_background_image(
-                config["background_images"],
+                config[images_key],
                 saved_filename,
             )
             config = {
                 **config,
-                "background_images": background_images,
+                current_key: config.get(current_key) or saved_filename,
+                images_key: background_images,
             }
             self.injection_status = ensure_dashboard_injection(self.paths)
             self._save_config(config)
@@ -195,6 +219,7 @@ class PalettePlugin(Star):
                 "message": "背景图片已加入图库。",
                 "background_image": saved_filename,
                 "background_url": self._background_url(saved_filename),
+                "orientation": normalized_orientation,
                 "config": self._public_config(),
             }
         )
@@ -207,15 +232,24 @@ class PalettePlugin(Star):
         filename = str(payload.get("background_image") or "").strip()
         if not filename:
             return error_response("请选择要切换的背景图片。")
+        orientation = self._normalize_background_orientation(
+            payload.get("orientation"),
+            default="legacy",
+        )
 
         try:
+            current_key, _ = self._background_pool_keys(orientation)
             config = self._normalize_config(
                 {
                     **self._public_config(),
-                    "background_image": filename,
+                    current_key: filename,
                 }
             )
-            config = self._with_theme_colors(config, force=True)
+            config = self._with_theme_colors(
+                config,
+                force=True,
+                orientation=orientation,
+            )
             self._save_config(config)
         except ValueError as exc:
             return error_response(str(exc))
@@ -235,10 +269,18 @@ class PalettePlugin(Star):
         filename = str(payload.get("background_image") or "").strip()
         if not filename:
             return error_response("请选择要删除的背景图片。")
+        orientation = self._normalize_background_orientation(
+            payload.get("orientation"),
+            default="legacy",
+        )
 
         try:
             config = self._normalize_config(self._public_config())
-            if filename not in config["background_images"]:
+            is_known = any(
+                filename in config[self._background_pool_keys(pool)[1]]
+                for pool in BACKGROUND_POOLS
+            )
+            if not is_known:
                 raise ValueError("背景图片不在图库中。")
 
             target_path = self._resolve_background(filename)
@@ -246,23 +288,27 @@ class PalettePlugin(Star):
                 target_path.unlink()
             delete_background_thumbnails(self.paths.thumbnail_dir, filename)
 
-            background_images = [
-                item for item in config["background_images"] if item != filename
-            ]
-            current_background = config["background_image"]
-            next_background = current_background
+            next_config = {**config}
             should_refresh_colors = False
-            if current_background == filename:
-                next_background = background_images[0] if background_images else ""
-                should_refresh_colors = True
+            for pool in BACKGROUND_POOLS:
+                current_key, images_key = self._background_pool_keys(pool)
+                background_images = [
+                    item for item in next_config[images_key] if item != filename
+                ]
+                next_config[images_key] = background_images
+                if next_config[current_key] == filename:
+                    next_config[current_key] = (
+                        background_images[0] if background_images else ""
+                    )
+                    should_refresh_colors = True
 
-            config = {
-                **config,
-                "background_image": next_background,
-                "background_images": background_images,
-            }
             if should_refresh_colors:
-                config = self._with_theme_colors(config, force=True)
+                next_config = self._with_theme_colors(
+                    next_config,
+                    force=True,
+                    orientation=orientation,
+                )
+            config = next_config
             self._save_config(config)
         except ValueError as exc:
             return error_response(str(exc))
@@ -270,18 +316,26 @@ class PalettePlugin(Star):
         return json_response(
             {
                 "message": "背景图片已删除。",
+                "orientation": orientation,
                 "config": self._public_config(),
             }
         )
 
     async def random_select_background(self):
+        payload = await request.json(default={})
+        if not isinstance(payload, dict):
+            payload = {}
+        orientation = self._normalize_background_orientation(
+            payload.get("orientation"),
+            default="legacy",
+        )
         try:
             config = self._normalize_config(self._public_config())
-            background_images = config["background_images"]
-            if not background_images:
-                raise ValueError("图库中还没有可随机的背景图片。")
+            pool, current_background, background_images = self._random_background_pool(
+                config,
+                orientation,
+            )
 
-            current_background = config["background_image"]
             if len(background_images) == 1 and current_background == background_images[0]:
                 return json_response(
                     {
@@ -298,11 +352,12 @@ class PalettePlugin(Star):
             if not candidates:
                 candidates = background_images
             selected = random.choice(candidates)
+            current_key, _ = self._background_pool_keys(pool)
             config = {
                 **config,
-                "background_image": selected,
+                current_key: selected,
             }
-            config = self._with_theme_colors(config, force=True)
+            config = self._with_theme_colors(config, force=True, orientation=pool)
             self._save_config(config)
         except ValueError as exc:
             return error_response(str(exc))
@@ -310,15 +365,24 @@ class PalettePlugin(Star):
         return json_response(
             {
                 "message": "背景图片已随机切换。",
+                "orientation": pool,
                 "config": self._public_config(),
             }
         )
 
     async def recalculate_theme_colors(self):
+        payload = await request.json(default={})
+        if not isinstance(payload, dict):
+            payload = {}
+        orientation = self._normalize_background_orientation(
+            payload.get("orientation") or request.query.get("orientation"),
+            default="legacy",
+        )
         try:
             config = self._with_theme_colors(
                 self._normalize_config(self._public_config()),
                 force=True,
+                orientation=orientation,
             )
             self._save_config(config)
         except ValueError as exc:
@@ -436,6 +500,44 @@ class PalettePlugin(Star):
         background_images = self._public_background_images(background_image)
         if background_image and background_image not in background_images:
             background_image = ""
+        landscape_background_image = self._config_str(
+            "landscape_background_image",
+            "",
+        ).strip()
+        landscape_background_images = self._public_background_images(
+            landscape_background_image,
+            key="landscape_background_images",
+        )
+        if not landscape_background_images and background_images:
+            landscape_background_images = list(background_images)
+            if not landscape_background_image:
+                landscape_background_image = background_image
+        if landscape_background_image and landscape_background_image not in landscape_background_images:
+            landscape_background_image = ""
+
+        portrait_background_image = self._config_str(
+            "portrait_background_image",
+            "",
+        ).strip()
+        portrait_background_images = self._public_background_images(
+            portrait_background_image,
+            key="portrait_background_images",
+        )
+        if portrait_background_image and portrait_background_image not in portrait_background_images:
+            portrait_background_image = ""
+
+        fallback_background_image = self._select_theme_background(
+            {
+                "background_image": background_image,
+                "landscape_background_image": landscape_background_image,
+                "portrait_background_image": portrait_background_image,
+            }
+        )
+        direction_config = {
+            "background_image": background_image,
+            "landscape_background_image": landscape_background_image,
+            "portrait_background_image": portrait_background_image,
+        }
 
         return {
             "enabled": self._config_bool("enabled", True),
@@ -444,6 +546,18 @@ class PalettePlugin(Star):
             "background_items": [
                 self._background_item(filename, filename == background_image)
                 for filename in background_images
+            ],
+            "landscape_background_image": landscape_background_image,
+            "landscape_background_images": landscape_background_images,
+            "landscape_background_items": [
+                self._background_item(filename, filename == landscape_background_image)
+                for filename in landscape_background_images
+            ],
+            "portrait_background_image": portrait_background_image,
+            "portrait_background_images": portrait_background_images,
+            "portrait_background_items": [
+                self._background_item(filename, filename == portrait_background_image)
+                for filename in portrait_background_images
             ],
             "background_fit": self._config_str("background_fit", "cover"),
             "background_position": self._config_str(
@@ -488,6 +602,13 @@ class PalettePlugin(Star):
             ),
             "advanced_css": self._config_str("advanced_css", ""),
             "background_url": self._background_url(background_image),
+            "landscape_background_url": self._background_url(
+                self._select_direction_background(direction_config, "landscape")
+            ),
+            "portrait_background_url": self._background_url(
+                self._select_direction_background(direction_config, "portrait")
+            ),
+            "fallback_background_url": self._background_url(fallback_background_image),
         }
 
     def _config_bool(self, key: str, default: bool) -> bool:
@@ -527,6 +648,46 @@ class PalettePlugin(Star):
                 background_image,
             )
 
+        landscape_background_images = self._normalize_background_images(
+            payload.get(
+                "landscape_background_images",
+                current["landscape_background_images"],
+            )
+        )
+        landscape_background_image = str(
+            payload.get(
+                "landscape_background_image",
+                current["landscape_background_image"],
+            )
+            or ""
+        ).strip()
+        if landscape_background_image:
+            self._resolve_background(landscape_background_image, must_exist=True)
+            landscape_background_images = self._append_background_image(
+                landscape_background_images,
+                landscape_background_image,
+            )
+
+        portrait_background_images = self._normalize_background_images(
+            payload.get(
+                "portrait_background_images",
+                current["portrait_background_images"],
+            )
+        )
+        portrait_background_image = str(
+            payload.get(
+                "portrait_background_image",
+                current["portrait_background_image"],
+            )
+            or ""
+        ).strip()
+        if portrait_background_image:
+            self._resolve_background(portrait_background_image, must_exist=True)
+            portrait_background_images = self._append_background_image(
+                portrait_background_images,
+                portrait_background_image,
+            )
+
         background_fit = str(
             payload.get("background_fit", current["background_fit"]) or "cover"
         ).strip()
@@ -564,6 +725,10 @@ class PalettePlugin(Star):
             ),
             "background_image": background_image,
             "background_images": background_images,
+            "landscape_background_image": landscape_background_image,
+            "landscape_background_images": landscape_background_images,
+            "portrait_background_image": portrait_background_image,
+            "portrait_background_images": portrait_background_images,
             "background_fit": background_fit,
             "background_position": background_position,
             "background_blur": self._clamp_int(
@@ -647,7 +812,14 @@ class PalettePlugin(Star):
             current = self._normalize_config(public_config)
             config = self._with_theme_colors(current)
             raw_background_images = self.config.get("background_images", [])
-            if config != current or raw_background_images != config["background_images"]:
+            raw_landscape_images = self.config.get("landscape_background_images", [])
+            raw_portrait_images = self.config.get("portrait_background_images", [])
+            if (
+                config != current
+                or raw_background_images != config["background_images"]
+                or raw_landscape_images != config["landscape_background_images"]
+                or raw_portrait_images != config["portrait_background_images"]
+            ):
                 self._save_config(config)
 
     def _with_theme_colors(
@@ -655,8 +827,9 @@ class PalettePlugin(Star):
         config: dict[str, Any],
         *,
         force: bool = False,
+        orientation: str | None = None,
     ) -> dict[str, Any]:
-        filename = str(config.get("background_image") or "").strip()
+        filename = self._select_theme_background(config, orientation=orientation)
         if not filename:
             if force:
                 config = {**config, "theme_primary": "", "theme_secondary": ""}
@@ -787,9 +960,14 @@ class PalettePlugin(Star):
             "selected": selected,
         }
 
-    def _public_background_images(self, current_background: str) -> list[str]:
+    def _public_background_images(
+        self,
+        current_background: str,
+        *,
+        key: str = "background_images",
+    ) -> list[str]:
         background_images = self._normalize_background_images(
-            self.config.get("background_images", [])
+            self.config.get(key, [])
         )
         if current_background:
             with suppress(ValueError):
@@ -825,6 +1003,87 @@ class PalettePlugin(Star):
         if not filename or filename in background_images:
             return list(background_images)
         return [*background_images, filename]
+
+    @staticmethod
+    def _normalize_background_orientation(value: Any, *, default: str) -> str:
+        if isinstance(value, str):
+            orientation = value.strip().lower()
+            if orientation in BACKGROUND_POOLS:
+                return orientation
+        return default
+
+    @staticmethod
+    def _background_pool_keys(orientation: str) -> tuple[str, str]:
+        if orientation == "landscape":
+            return "landscape_background_image", "landscape_background_images"
+        if orientation == "portrait":
+            return "portrait_background_image", "portrait_background_images"
+        return "background_image", "background_images"
+
+    @staticmethod
+    def _select_theme_background(
+        config: Mapping[str, Any],
+        orientation: str | None = None,
+    ) -> str:
+        if orientation in BACKGROUND_ORIENTATIONS:
+            filename = PalettePlugin._select_direction_background(config, orientation)
+            if filename:
+                return filename
+        if orientation == "legacy":
+            legacy_filename = str(config.get("background_image") or "").strip()
+            if legacy_filename:
+                return legacy_filename
+        for key in (
+            "landscape_background_image",
+            "portrait_background_image",
+            "background_image",
+        ):
+            filename = str(config.get(key) or "").strip()
+            if filename:
+                return filename
+        return ""
+
+    @staticmethod
+    def _select_direction_background(
+        config: Mapping[str, Any],
+        orientation: str,
+    ) -> str:
+        if orientation == "portrait":
+            keys = (
+                "portrait_background_image",
+                "background_image",
+                "landscape_background_image",
+            )
+        else:
+            keys = (
+                "landscape_background_image",
+                "background_image",
+                "portrait_background_image",
+            )
+        for key in keys:
+            filename = str(config.get(key) or "").strip()
+            if filename:
+                return filename
+        return ""
+
+    def _random_background_pool(
+        self,
+        config: Mapping[str, Any],
+        orientation: str,
+    ) -> tuple[str, str, list[str]]:
+        if orientation == "landscape":
+            ordered = ("landscape", "legacy", "portrait")
+        elif orientation == "portrait":
+            ordered = ("portrait", "legacy", "landscape")
+        else:
+            ordered = ("legacy", "landscape", "portrait")
+
+        for pool in ordered:
+            current_key, images_key = self._background_pool_keys(pool)
+            images = list(config.get(images_key) or [])
+            if images:
+                return pool, str(config.get(current_key) or "").strip(), images
+        raise ValueError("图库中还没有可随机的背景图片。")
 
     async def _build_token_stats(self, days: int) -> dict[str, Any]:
         from astrbot.core.db.po import ProviderStat

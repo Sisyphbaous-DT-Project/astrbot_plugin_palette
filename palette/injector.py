@@ -579,9 +579,17 @@ def _build_bootstrap_script(
     var PREVIOUS_SECONDARY_RGB_KEY = "astrbot_palette_theme_previous_secondary_rgb";
     var PREVIOUS_DARKPRIMARY_RGB_KEY = "astrbot_palette_theme_previous_darkprimary_rgb";
     var PREVIOUS_DARKSECONDARY_RGB_KEY = "astrbot_palette_theme_previous_darksecondary_rgb";
+    var BACKGROUND_CONTAINER_ID = "astrbot-palette-background";
     var lastToken = null;
     var lastBackgroundUrl = "";
+    var lastBackgroundObjectUrl = "";
+    var currentBackgroundUrl = "";
     var currentObjectUrl = "";
+    var backgroundObjectUrlCache = {{}};
+    var backgroundActiveLayer = null;
+    var backgroundRequestSeq = 0;
+    var backgroundResizeTimer = 0;
+    var lastConfig = null;
     var restoredThemeStyleActive = false;
     var restoredThemePrimary = "";
     var restoredThemeSecondary = "";
@@ -718,12 +726,105 @@ def _build_bootstrap_script(
       restoredThemeSecondary = "";
     }}
 
-    function revokeObjectUrl() {{
-      if (!currentObjectUrl) {{
-        return;
-      }}
-      URL.revokeObjectURL(currentObjectUrl);
+    function revokeObjectUrls() {{
+      backgroundRequestSeq += 1;
+      Object.keys(backgroundObjectUrlCache).forEach(function (url) {{
+        try {{
+          URL.revokeObjectURL(backgroundObjectUrlCache[url]);
+        }} catch (_) {{
+        }}
+      }});
+      backgroundObjectUrlCache = {{}};
+      lastBackgroundUrl = "";
+      lastBackgroundObjectUrl = "";
+      currentBackgroundUrl = "";
       currentObjectUrl = "";
+    }}
+
+    function removeBackgroundContainer() {{
+      var container = document.getElementById(BACKGROUND_CONTAINER_ID);
+      if (container) {{
+        container.remove();
+      }}
+    }}
+
+    function ensureBackgroundContainer() {{
+      var container = document.getElementById(BACKGROUND_CONTAINER_ID);
+      if (!container) {{
+        container = document.createElement("div");
+        container.id = BACKGROUND_CONTAINER_ID;
+        container.setAttribute("aria-hidden", "true");
+        for (var index = 0; index < 2; index += 1) {{
+          var layer = document.createElement("div");
+          layer.className = "astrbot-palette-background-layer";
+          container.appendChild(layer);
+        }}
+        document.body.prepend(container);
+      }}
+      return container;
+    }}
+
+    function getViewportOrientation() {{
+      try {{
+        if (window.matchMedia && window.matchMedia("(orientation: portrait)").matches) {{
+          return "portrait";
+        }}
+      }} catch (_) {{
+      }}
+      return window.innerHeight > window.innerWidth ? "portrait" : "landscape";
+    }}
+
+    function pickBackgroundUrl(config, orientation) {{
+      if (orientation === "portrait") {{
+        return config.portrait_background_url || config.background_url || config.landscape_background_url || config.fallback_background_url || "";
+      }}
+      return config.landscape_background_url || config.background_url || config.portrait_background_url || config.fallback_background_url || "";
+    }}
+
+    function applyBackgroundLayer(objectUrl, animate) {{
+      var container = ensureBackgroundContainer();
+      var layers = container.querySelectorAll(".astrbot-palette-background-layer");
+      if (layers.length < 2) {{
+        removeBackgroundContainer();
+        container = ensureBackgroundContainer();
+        layers = container.querySelectorAll(".astrbot-palette-background-layer");
+      }}
+      var currentLayer = backgroundActiveLayer;
+      if (!currentLayer || !container.contains(currentLayer)) {{
+        currentLayer = container.querySelector(".astrbot-palette-background-layer.is-active");
+      }}
+      var nextLayer = currentLayer || layers[0];
+      if (animate && currentLayer) {{
+        Array.prototype.some.call(layers, function (layer) {{
+          if (layer !== currentLayer) {{
+            nextLayer = layer;
+            return true;
+          }}
+          return false;
+        }});
+      }}
+      nextLayer.style.backgroundImage = objectUrl ? 'url("' + objectUrl + '")' : "none";
+      if (animate && currentLayer && currentLayer !== nextLayer) {{
+        container.appendChild(nextLayer);
+        nextLayer.classList.add("is-active");
+        currentLayer.classList.remove("is-active");
+        backgroundActiveLayer = nextLayer;
+        window.setTimeout(function () {{
+          if (!currentLayer.classList.contains("is-active")) {{
+            currentLayer.style.backgroundImage = "none";
+          }}
+        }}, 520);
+      }} else {{
+        container.appendChild(nextLayer);
+        Array.prototype.forEach.call(layers, function (layer) {{
+          var isNextLayer = layer === nextLayer;
+          layer.classList.toggle("is-active", isNextLayer);
+          if (!isNextLayer) {{
+            layer.style.backgroundImage = "none";
+          }}
+        }});
+        backgroundActiveLayer = nextLayer;
+      }}
     }}
 
     function setInactive() {{
@@ -746,8 +847,9 @@ def _build_bootstrap_script(
       ].forEach(function (name) {{
         document.documentElement.style.removeProperty(name);
       }});
-      lastBackgroundUrl = "";
-      revokeObjectUrl();
+      removeBackgroundContainer();
+      revokeObjectUrls();
+      lastConfig = null;
       restoreThemeColors();
       stopTokenStatsEnhancement();
     }}
@@ -852,10 +954,15 @@ def _build_bootstrap_script(
     function applyThemeColors(config) {{
       var primary = normalizeHexColor(config.theme_primary);
       var secondary = normalizeHexColor(config.theme_secondary);
+      var currentBackground = (
+        config.landscape_background_image ||
+        config.portrait_background_image ||
+        config.background_image
+      );
       var shouldApply = Boolean(
         config.enabled &&
         config.auto_theme_enabled &&
-        config.background_image &&
+        currentBackground &&
         primary &&
         secondary
       );
@@ -1309,11 +1416,13 @@ def _build_bootstrap_script(
     async function fetchBackground(url, token) {{
       if (!url) {{
         lastBackgroundUrl = "";
-        revokeObjectUrl();
+        lastBackgroundObjectUrl = "";
         return "";
       }}
-      if (url === lastBackgroundUrl && currentObjectUrl) {{
-        return currentObjectUrl;
+      if (backgroundObjectUrlCache[url]) {{
+        lastBackgroundUrl = url;
+        lastBackgroundObjectUrl = backgroundObjectUrlCache[url];
+        return lastBackgroundObjectUrl;
       }}
       var response = await fetch(withCacheBust(url), {{
         cache: "no-store",
@@ -1324,28 +1433,85 @@ def _build_bootstrap_script(
         throw new Error("HTTP " + response.status);
       }}
       var blob = await response.blob();
-      revokeObjectUrl();
-      currentObjectUrl = URL.createObjectURL(blob);
+      var objectUrl = URL.createObjectURL(blob);
+      backgroundObjectUrlCache[url] = objectUrl;
       lastBackgroundUrl = url;
-      return currentObjectUrl;
+      lastBackgroundObjectUrl = objectUrl;
+      return objectUrl;
+    }}
+
+    async function applyDirectionalBackground(config, token, animate) {{
+      var requestSeq = backgroundRequestSeq + 1;
+      backgroundRequestSeq = requestSeq;
+      var orientation = getViewportOrientation();
+      var backgroundUrl = pickBackgroundUrl(config, orientation);
+      if (!backgroundUrl) {{
+        currentBackgroundUrl = "";
+        currentObjectUrl = "";
+        applyBackgroundLayer("", false);
+        applyConfig(config, "");
+        return "";
+      }}
+      if (backgroundUrl === currentBackgroundUrl && currentObjectUrl) {{
+        applyBackgroundLayer(currentObjectUrl, false);
+        applyConfig(config, currentObjectUrl);
+        return currentObjectUrl;
+      }}
+      var imageUrl = "";
+      try {{
+        imageUrl = await fetchBackground(backgroundUrl, token);
+      }} catch (error) {{
+        if (requestSeq !== backgroundRequestSeq) {{
+          return currentObjectUrl || "";
+        }}
+        throw error;
+      }}
+      if (
+        requestSeq !== backgroundRequestSeq ||
+        pickBackgroundUrl(config, getViewportOrientation()) !== backgroundUrl
+      ) {{
+        return currentObjectUrl || "";
+      }}
+      currentBackgroundUrl = backgroundUrl;
+      currentObjectUrl = imageUrl;
+      applyBackgroundLayer(imageUrl, Boolean(animate));
+      applyConfig(config, imageUrl);
+      return imageUrl;
     }}
 
     async function resolveConfigForRefresh(token, allowInitialRandom) {{
       var config = await fetchJson(CONFIG_URL, token);
+      var orientation = getViewportOrientation();
+      var orientationImages = orientation === "portrait"
+        ? config.portrait_background_images
+        : config.landscape_background_images;
+      var currentImage = orientation === "portrait"
+        ? config.portrait_background_image
+        : config.landscape_background_image;
+      var fallbackImages = config.background_images;
+      var otherImages = orientation === "portrait"
+        ? config.landscape_background_images
+        : config.portrait_background_images;
+      var hasRandomPool = (
+        (Array.isArray(orientationImages) && (
+          orientationImages.length > 1 ||
+          (orientationImages.length === 1 && !currentImage)
+        )) ||
+        (Array.isArray(fallbackImages) && fallbackImages.length > 0) ||
+        (Array.isArray(otherImages) && otherImages.length > 0)
+      );
       if (
         allowInitialRandom &&
         initialRandomPending &&
         config.enabled &&
         config.random_background_on_load &&
-        Array.isArray(config.background_images) &&
-        (
-          config.background_images.length > 1 ||
-          (config.background_images.length === 1 && !config.background_image)
-        )
+        hasRandomPool
       ) {{
         initialRandomPending = false;
         try {{
-          var randomResponse = await postJson(RANDOM_SELECT_URL, token, {{}});
+          var randomResponse = await postJson(RANDOM_SELECT_URL, token, {{
+            orientation: orientation,
+          }});
           if (randomResponse && randomResponse.config) {{
             return randomResponse.config;
           }}
@@ -1382,24 +1548,26 @@ def _build_bootstrap_script(
         }}
 
         var css = await fetchText(THEME_URL, token);
-        var imageUrl = "";
-        if (config.background_url) {{
-          try {{
-            imageUrl = await fetchBackground(config.background_url, token);
-          }} catch (error) {{
+        ensureStyleElement(css);
+        lastConfig = config;
+        try {{
+          await applyDirectionalBackground(
+            config,
+            token,
+            Boolean(options && options.animateBackground)
+          );
+        }} catch (error) {{
+          if (!currentObjectUrl) {{
             setInactive();
             removeStyleElement();
-            throw error;
           }}
-        }} else {{
-          lastBackgroundUrl = "";
-          revokeObjectUrl();
+          throw error;
         }}
-        ensureStyleElement(css);
-        applyConfig(config, imageUrl);
       }} catch (error) {{
-        setInactive();
-        removeStyleElement();
+        if (!currentObjectUrl) {{
+          setInactive();
+          removeStyleElement();
+        }}
         if (!isExpectedAuthFailure(error)) {{
           console.warn("[AstrBot调色盘] 背景刷新失败：", error);
         }}
@@ -1433,7 +1601,32 @@ def _build_bootstrap_script(
       }}
     }});
     window.addEventListener("hashchange", refreshPalette);
-    window.addEventListener("beforeunload", revokeObjectUrl);
+    function scheduleDirectionalBackgroundRefresh() {{
+      if (!lastConfig || !lastConfig.enabled) {{
+        return;
+      }}
+      window.clearTimeout(backgroundResizeTimer);
+      backgroundResizeTimer = window.setTimeout(function () {{
+        applyDirectionalBackground(lastConfig, lastToken || getToken(), true).catch(function (error) {{
+          if (!isExpectedAuthFailure(error)) {{
+            console.warn("[AstrBot调色盘] 方向背景切换失败：", error);
+          }}
+        }});
+      }}, 150);
+    }}
+
+    window.addEventListener("resize", scheduleDirectionalBackgroundRefresh, {{ passive: true }});
+    window.addEventListener("orientationchange", scheduleDirectionalBackgroundRefresh, {{ passive: true }});
+    try {{
+      var orientationMedia = window.matchMedia("(orientation: portrait)");
+      if (orientationMedia && orientationMedia.addEventListener) {{
+        orientationMedia.addEventListener("change", scheduleDirectionalBackgroundRefresh);
+      }} else if (orientationMedia && orientationMedia.addListener) {{
+        orientationMedia.addListener(scheduleDirectionalBackgroundRefresh);
+      }}
+    }} catch (_) {{
+    }}
+    window.addEventListener("beforeunload", revokeObjectUrls);
 
     window.setInterval(function () {{
       dropRestoredThemeStyleIfUserChangedColors();
