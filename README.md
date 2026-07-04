@@ -2,9 +2,11 @@
 
 AstrBot调色盘是一个 AstrBot WebUI 美化插件。当前版本聚焦于背景图库、透明界面、Liquid Glass 设置页、文字可读性增强和壁纸主题色联动，让 Dashboard 可以在不修改 AstrBot 源码的前提下换上自定义壁纸。
 
-> 当前版本：`0.4.5`
+当前已确认兼容 AstrBot `4.26.4`。
+
+> 当前版本：`0.4.6`
 >
-> 兼容 AstrBot：`>=4.26.0-beta1`
+> 兼容 AstrBot：`>=4.26.0-beta1`，已确认兼容 `4.26.4`
 
 ## 功能
 
@@ -50,7 +52,7 @@ git clone https://github.com/Sisyphbaous-DT-Project/astrbot_plugin_palette.git
 
 - 插件名：`astrbot_plugin_palette`
 - 展示名：`AstrBot调色盘`
-- 版本：`0.4.5`
+- 版本：`0.4.6`
 
 ## 使用
 
