@@ -1,5 +1,13 @@
 # 更新日志
 
+## 0.4.7
+
+### 兼容性
+
+- 确认兼容 AstrBot `4.26.5`，插件 API、设置页桥接、WebUI 注入路径、统计页增强和透明化样式锚点均保持可用。
+- 已复核 AstrBot `4.26.5` 的 ChatUI project workspaces、Token usage indicator、WebChat 历史时间戳、插件启用状态同步和 snackbar 调整，未发现阻塞级兼容问题。
+- README 开头补充当前版本已确认兼容 AstrBot `4.26.5` 的说明。
+
 ## 0.4.6
 
 ### 兼容性
