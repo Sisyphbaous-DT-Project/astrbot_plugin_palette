@@ -14,6 +14,7 @@ from .constants import (
     INJECTION_END_MARKER,
     INJECTION_START_MARKER,
     PLUGIN_NAME,
+    THEME_CACHE_VERSION,
     VERSION,
 )
 from .paths import PalettePaths
@@ -528,7 +529,7 @@ def _inject_prepared_fallback(
 def _build_injection_block() -> str:
     config_url = f"/api/v1/plugins/extensions/{PLUGIN_NAME}/config"
     random_select_url = f"/api/v1/plugins/extensions/{PLUGIN_NAME}/backgrounds/random-select"
-    theme_url = f"/api/v1/plugins/extensions/{PLUGIN_NAME}/theme.css"
+    theme_url = f"/api/v1/plugins/extensions/{PLUGIN_NAME}/theme.css?v={VERSION}-{THEME_CACHE_VERSION}"
     token_stats_url = f"/api/v1/plugins/extensions/{PLUGIN_NAME}/token-stats"
     return "\n".join(
         [

@@ -567,6 +567,7 @@ class PalettePlugin(Star):
             "background_blur": self._config_int("background_blur", 0),
             "background_dim": self._config_float("background_dim", 0.5),
             "surface_opacity": self._config_float("surface_opacity", 0.0),
+            "stats_card_blur": self._config_int("stats_card_blur", 14),
             "text_enhancement_mode": self._config_str(
                 "text_enhancement_mode",
                 "soft_shadow",
@@ -745,6 +746,11 @@ class PalettePlugin(Star):
                 payload.get("surface_opacity", current["surface_opacity"]),
                 0.0,
                 1.0,
+            ),
+            "stats_card_blur": self._clamp_int(
+                payload.get("stats_card_blur", current["stats_card_blur"]),
+                0,
+                40,
             ),
             "text_enhancement_mode": text_enhancement_mode,
             "text_enhancement_strength": self._clamp_float(

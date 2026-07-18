@@ -81,6 +81,12 @@
     "default": 0.0,
     "hint": "取值 0 到 1；0 表示常驻面板透明，1 表示接近原主题底色。"
   },
+  "stats_card_blur": {
+    "description": "信息框背景模糊",
+    "type": "int",
+    "default": 14,
+    "hint": "单位为 px，控制统计、平台、提供商、插件和配置页面主要信息块的背景模糊强度。"
+  },
   "text_enhancement_mode": {
     "description": "文字增强模式",
     "type": "string",
