@@ -81,6 +81,12 @@
     "default": 0.0,
     "hint": "取值 0 到 1；0 表示常驻面板透明，1 表示接近原主题底色。"
   },
+  "stats_card_blur": {
+    "description": "信息框毛玻璃强度",
+    "type": "int",
+    "default": 14,
+    "hint": "范围为 0 到 40 px，控制统计、平台、提供商、插件和配置页面主要信息框的毛玻璃强度；0 表示同时关闭模糊、半透明底色、边框和阴影，让信息框恢复全透明。"
+  },
   "text_enhancement_mode": {
     "description": "文字增强模式",
     "type": "string",

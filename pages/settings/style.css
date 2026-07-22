@@ -1208,10 +1208,18 @@ input[type="range"]::-moz-range-thumb {
 }
 
 .sample-card {
+  backdrop-filter: var(--preview-card-filter, blur(14px) saturate(1.08));
+  -webkit-backdrop-filter: var(--preview-card-filter, blur(14px) saturate(1.08));
   display: grid;
   gap: 6px;
   min-height: 116px;
   padding: 16px;
+}
+
+.effect-preview.is-card-glass-disabled .sample-card {
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
 }
 
 .sample-card small {
