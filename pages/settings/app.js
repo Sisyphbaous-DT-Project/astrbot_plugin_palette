@@ -673,7 +673,11 @@ function updatePreview() {
     preview.style.setProperty("--preview-surface-fill-bottom", formatCssNumber(0.005 + config.surface_opacity * 0.08));
     preview.style.setProperty("--preview-surface-rim", formatCssNumber(0.16 + config.surface_opacity * 0.24));
     preview.style.setProperty("--preview-surface-shadow", formatCssNumber(0.08 + config.surface_opacity * 0.12));
-    preview.style.setProperty("--preview-card-blur", `${config.stats_card_blur}px`);
+    const statsCardBlur = Number(config.stats_card_blur) || 0;
+    preview.style.setProperty(
+      "--preview-card-filter",
+      statsCardBlur > 0 ? `blur(${statsCardBlur}px) saturate(1.08)` : "none",
+    );
     preview.style.setProperty(
       "--preview-text-shadow",
       buildPreviewTextShadow(config),
