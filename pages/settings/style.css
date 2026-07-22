@@ -1216,6 +1216,12 @@ input[type="range"]::-moz-range-thumb {
   padding: 16px;
 }
 
+.effect-preview.is-card-glass-disabled .sample-card {
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
+}
+
 .sample-card small {
   color: rgba(255, 255, 255, 0.72);
   font-size: 10px;

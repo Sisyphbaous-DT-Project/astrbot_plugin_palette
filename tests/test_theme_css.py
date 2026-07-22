@@ -57,6 +57,85 @@ class StatsCardBlurTest(unittest.TestCase):
         self.assertIn("backdrop-filter: none !important;", css)
         self.assertIn("-webkit-backdrop-filter: none !important;", css)
 
+    def test_blur_zero_removes_card_glass_decoration(self) -> None:
+        css = _css({"stats_card_blur": 0})
+        card_bodies = _rules_bodies(css, ".v-card.plugin-card")
+        glass_bodies = _rules_bodies(css, ".v-card.plugin-card::before")
+        hover_bodies = _rules_bodies(css, ".plugin-card:hover")
+
+        self.assertTrue(
+            any(
+                "border: 1px solid transparent !important;" in body
+                and "box-shadow: none !important;" in body
+                for body in card_bodies
+            )
+        )
+        self.assertTrue(
+            any(
+                "background: transparent !important;" in body
+                and "backdrop-filter: none !important;" in body
+                for body in glass_bodies
+            )
+        )
+        self.assertTrue(
+            any(
+                "box-shadow: none !important;" in body
+                and "transform: none;" in body
+                for body in hover_bodies
+            )
+        )
+
+    def test_blur_zero_removes_config_and_overview_decoration(self) -> None:
+        css = _css({"stats_card_blur": 0})
+        panel_bodies = _rules_bodies(css, ".config-panel")
+        section_bodies = _rules_bodies(css, ".config-panel .config-section")
+        overview_bodies = _rules_bodies(css, ".stats-page .overview-card::before")
+
+        self.assertTrue(
+            any(
+                "border: 1px solid transparent !important;" in body
+                and "box-shadow: none !important;" in body
+                for body in panel_bodies
+            )
+        )
+        self.assertTrue(
+            any(
+                "background: transparent !important;" in body
+                and "border: 1px solid transparent !important;" in body
+                and "box-shadow: none !important;" in body
+                for body in section_bodies
+            )
+        )
+        self.assertTrue(any("background: none;" in body for body in overview_bodies))
+
+    def test_blur_zero_removes_markdown_dialog_decoration(self) -> None:
+        css = _css({"stats_card_blur": 0})
+        bodies = _rules_bodies(css, '.v-card:has([class*="markdown"])')
+        self.assertTrue(
+            any(
+                "background: transparent !important;" in body
+                and "border-color: transparent !important;" in body
+                and "box-shadow: none !important;" in body
+                for body in bodies
+            )
+        )
+
+    def test_settings_preview_disables_full_card_glass_at_zero(self) -> None:
+        root = Path(__file__).resolve().parent.parent
+        script = (root / "pages/settings/app.js").read_text(encoding="utf-8")
+        style = (root / "pages/settings/style.css").read_text(encoding="utf-8")
+
+        self.assertIn(
+            'classList.toggle("is-card-glass-disabled", statsCardBlur <= 0)',
+            script,
+        )
+        self.assertRegex(
+            style,
+            r"\.is-card-glass-disabled\s+\.sample-card\s*\{[^}]*"
+            r"background:\s*transparent;[^}]*border-color:\s*transparent;[^}]*"
+            r"box-shadow:\s*none;",
+        )
+
 
 class ConfigPanelSafetyTest(unittest.TestCase):
     def test_config_panel_itself_has_no_containing_block_props(self) -> None:

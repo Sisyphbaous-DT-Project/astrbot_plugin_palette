@@ -678,6 +678,7 @@ function updatePreview() {
       "--preview-card-filter",
       statsCardBlur > 0 ? `blur(${statsCardBlur}px) saturate(1.08)` : "none",
     );
+    preview.classList.toggle("is-card-glass-disabled", statsCardBlur <= 0);
     preview.style.setProperty(
       "--preview-text-shadow",
       buildPreviewTextShadow(config),

@@ -762,34 +762,55 @@ def _backdrop_filter_lines(blur: int) -> list[str]:
 
 def _stats_highlight_css(stats_card_blur: int) -> str:
     blur = max(0, min(40, stats_card_blur))
+    glass_enabled = blur > 0
     surface = (
         "rgba(var(--v-theme-surface), "
         "calc(0.42 + var(--astrbot-palette-surface-opacity, 0) * 0.32))"
+        if glass_enabled
+        else "transparent"
     )
     surface_strong = (
         "rgba(var(--v-theme-surface), "
         "calc(0.54 + var(--astrbot-palette-surface-opacity, 0) * 0.28))"
+        if glass_enabled
+        else "transparent"
     )
     config_outer_surface = (
         "rgba(var(--v-theme-surface), "
         "calc(0.18 + var(--astrbot-palette-surface-opacity, 0) * 0.16))"
+        if glass_enabled
+        else "transparent"
     )
     config_shell_surface = (
         "rgba(var(--v-theme-surface), "
         "calc(0.20 + var(--astrbot-palette-surface-opacity, 0) * 0.18))"
+        if glass_enabled
+        else "transparent"
     )
     config_row_surface = (
         "rgba(var(--v-theme-surface), "
         "calc(0.30 + var(--astrbot-palette-surface-opacity, 0) * 0.22))"
+        if glass_enabled
+        else "transparent"
     )
     primary_soft = (
         "rgba(var(--v-theme-primary), "
         "calc(0.14 + var(--astrbot-palette-surface-opacity, 0) * 0.12))"
     )
-    primary_ring = "rgba(var(--v-theme-primary), 0.34)"
+    primary_ring = (
+        "rgba(var(--v-theme-primary), 0.34)" if glass_enabled else "transparent"
+    )
     border = (
         "rgba(var(--v-theme-on-surface), "
         "calc(0.20 + var(--astrbot-palette-surface-opacity, 0) * 0.12))"
+        if glass_enabled
+        else "transparent"
+    )
+    config_panel_border = (
+        "rgba(var(--v-theme-on-surface), 0.16)" if glass_enabled else "transparent"
+    )
+    config_row_border = (
+        "rgba(var(--v-theme-on-surface), 0.15)" if glass_enabled else "transparent"
     )
     text = "rgb(var(--v-theme-on-surface))"
     muted = "rgba(var(--v-theme-on-surface), 0.78)"
@@ -797,12 +818,40 @@ def _stats_highlight_css(stats_card_blur: int) -> str:
     shadow = (
         "0 16px 36px rgba(0, 0, 0, 0.26), "
         "inset 0 1px 0 rgba(255, 255, 255, 0.12)"
+        if glass_enabled
+        else "none"
     )
     hover_shadow = (
         "0 20px 44px rgba(0, 0, 0, 0.32), "
         "0 0 0 1px rgba(var(--v-theme-primary), 0.22), "
         "inset 0 1px 0 rgba(255, 255, 255, 0.16)"
+        if glass_enabled
+        else "none"
     )
+    config_panel_shadow = (
+        "0 20px 54px rgba(0, 0, 0, 0.18), "
+        "inset 0 1px 0 rgba(255, 255, 255, 0.10)"
+        if glass_enabled
+        else "none"
+    )
+    config_shell_shadow = (
+        "0 18px 46px rgba(0, 0, 0, 0.18), "
+        "inset 0 1px 0 rgba(255, 255, 255, 0.10)"
+        if glass_enabled
+        else "none"
+    )
+    config_row_shadow = (
+        "0 12px 30px rgba(0, 0, 0, 0.16), "
+        "inset 0 1px 0 rgba(255, 255, 255, 0.09)"
+        if glass_enabled
+        else "none"
+    )
+    overview_glint = (
+        "linear-gradient(135deg, rgba(255, 255, 255, 0.14), transparent 44%)"
+        if glass_enabled
+        else "none"
+    )
+    hover_transform = "translateY(-1px)" if glass_enabled else "none"
     return "\n".join(
         [
             "html.astrbot-palette-active #app .v-main .platform-page,",
@@ -1015,9 +1064,9 @@ def _stats_highlight_css(stats_card_blur: int) -> str:
             "html.astrbot-palette-active #app .v-main .config-panel {",
             "  background: transparent !important;",
             "  background-color: transparent !important;",
-            "  border: 1px solid rgba(var(--v-theme-on-surface), 0.16) !important;",
+            f"  border: 1px solid {config_panel_border} !important;",
             "  border-radius: 24px !important;",
-            "  box-shadow: 0 20px 54px rgba(0, 0, 0, 0.18), inset 0 1px 0 rgba(255, 255, 255, 0.10) !important;",
+            f"  box-shadow: {config_panel_shadow} !important;",
             "  padding: 18px !important;",
             "  overflow: visible !important;",
             "  position: relative !important;",
@@ -1057,9 +1106,9 @@ def _stats_highlight_css(stats_card_blur: int) -> str:
             "html.astrbot-palette-active #app .v-main .config-panel .config-section {",
             f"  background: {config_shell_surface} !important;",
             f"  background-color: {config_shell_surface} !important;",
-            "  border: 1px solid rgba(var(--v-theme-on-surface), 0.16) !important;",
+            f"  border: 1px solid {config_panel_border} !important;",
             "  border-radius: 18px !important;",
-            "  box-shadow: 0 18px 46px rgba(0, 0, 0, 0.18), inset 0 1px 0 rgba(255, 255, 255, 0.10) !important;",
+            f"  box-shadow: {config_shell_shadow} !important;",
             "  backdrop-filter: none !important;",
             "  -webkit-backdrop-filter: none !important;",
             "  margin: 18px 0 28px !important;",
@@ -1071,9 +1120,9 @@ def _stats_highlight_css(stats_card_blur: int) -> str:
             "html.astrbot-palette-active #app .v-main .config-panel .config-row {",
             f"  background: {config_row_surface} !important;",
             f"  background-color: {config_row_surface} !important;",
-            "  border: 1px solid rgba(var(--v-theme-on-surface), 0.15) !important;",
+            f"  border: 1px solid {config_row_border} !important;",
             "  border-radius: 14px !important;",
-            "  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.16), inset 0 1px 0 rgba(255, 255, 255, 0.09) !important;",
+            f"  box-shadow: {config_row_shadow} !important;",
             "  backdrop-filter: none !important;",
             "  -webkit-backdrop-filter: none !important;",
             "  margin: 10px 0 !important;",
@@ -1121,7 +1170,7 @@ def _stats_highlight_css(stats_card_blur: int) -> str:
             "  inset: 0;",
             "  pointer-events: none;",
             "  border-radius: inherit;",
-            "  background: linear-gradient(135deg, rgba(255, 255, 255, 0.14), transparent 44%);",
+            f"  background: {overview_glint};",
             "}",
             "",
             "html.astrbot-palette-active #app .v-main .stats-page .overview-card > * {",
@@ -1139,7 +1188,7 @@ def _stats_highlight_css(stats_card_blur: int) -> str:
             "html.astrbot-palette-active #app .v-main .config-panel .config-row:hover,",
             "html.astrbot-palette-active #app .v-main .stats-page .stat-card:hover {",
             f"  box-shadow: {hover_shadow} !important;",
-            "  transform: translateY(-1px);",
+            f"  transform: {hover_transform};",
             "}",
             "",
             "html.astrbot-palette-active #app .v-main .platform-page .item-card,",
@@ -2054,22 +2103,37 @@ def _platform_dialog_surface_css() -> str:
 
 def _extension_dialog_surface_css(stats_card_blur: int) -> str:
     blur = max(0, min(40, stats_card_blur))
+    glass_enabled = blur > 0
     surface = "rgba(var(--v-theme-surface), var(--astrbot-palette-surface-opacity, 0))"
     docs_surface = (
         "rgba(var(--v-theme-surface), "
         "calc(0.46 + var(--astrbot-palette-surface-opacity, 0) * 0.30))"
+        if glass_enabled
+        else "transparent"
     )
     docs_surface_soft = (
         "rgba(var(--v-theme-surface), "
         "calc(0.32 + var(--astrbot-palette-surface-opacity, 0) * 0.22))"
+        if glass_enabled
+        else "transparent"
     )
     neutral_soft = (
         "rgba(var(--v-theme-on-surface), "
         "calc(var(--astrbot-palette-surface-opacity, 0) * 0.08))"
+        if glass_enabled
+        else "transparent"
     )
     border = (
         "rgba(var(--v-theme-on-surface), "
         "calc(var(--astrbot-palette-surface-opacity, 0) * 0.18))"
+        if glass_enabled
+        else "transparent"
+    )
+    docs_shadow = (
+        "0 24px 72px rgba(0, 0, 0, 0.36), "
+        "inset 0 1px 0 rgba(255, 255, 255, 0.12)"
+        if glass_enabled
+        else "none"
     )
     return "\n".join(
         [
@@ -2149,7 +2213,7 @@ def _extension_dialog_surface_css(stats_card_blur: int) -> str:
             f"  background: {docs_surface} !important;",
             f"  background-color: {docs_surface} !important;",
             f"  border-color: {border} !important;",
-            "  box-shadow: 0 24px 72px rgba(0, 0, 0, 0.36), inset 0 1px 0 rgba(255, 255, 255, 0.12) !important;",
+            f"  box-shadow: {docs_shadow} !important;",
             *_backdrop_filter_lines(blur),
             "}",
             "",
