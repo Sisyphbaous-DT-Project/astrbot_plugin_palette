@@ -68,7 +68,7 @@ def build_theme_css(config: dict[str, Any]) -> str:
 
     return "\n".join(
         [
-            "/* AstrBot调色盘 0.4.8 运行时主题 CSS */",
+            "/* AstrBot调色盘 0.4.10 运行时主题 CSS */",
             ":root {",
             f"  --astrbot-palette-enabled: {enabled};",
             "  --astrbot-palette-background-image: none;",
@@ -164,7 +164,7 @@ def build_theme_css(config: dict[str, Any]) -> str:
             "",
             _floating_scrollbar_css(),
             "",
-            _surface_css(),
+            _surface_css(stats_card_blur),
             "",
             _top_header_css(),
             "",
@@ -185,6 +185,8 @@ def build_theme_css(config: dict[str, Any]) -> str:
             _extension_surface_css(),
             "",
             _stats_highlight_css(stats_card_blur),
+            "",
+            _component_management_surface_css(stats_card_blur),
             "",
             _config_dialog_surface_css(),
             "",
@@ -417,7 +419,8 @@ def _tabs_readability_css() -> str:
     )
 
 
-def _surface_css() -> str:
+def _surface_css(stats_card_blur: int) -> str:
+    blur = max(0, min(40, stats_card_blur))
     surface = "rgba(var(--v-theme-surface), var(--astrbot-palette-surface-opacity, 0))"
     container = (
         "rgba(var(--v-theme-containerBg), "
@@ -488,6 +491,10 @@ def _surface_css() -> str:
             "html.astrbot-palette-active #app .v-navigation-drawer .v-list-item--active {",
             f"  background-color: {hover} !important;",
             "  box-shadow: none !important;",
+            "}",
+            "",
+            "html.astrbot-palette-active #app .v-navigation-drawer .v-list-item--active {",
+            *_backdrop_filter_lines(blur),
             "}",
             "",
             "html.astrbot-palette-active #app .v-main .v-card--variant-outlined,",
@@ -1099,7 +1106,12 @@ def _stats_highlight_css(stats_card_blur: int) -> str:
             "  box-shadow: none !important;",
             "  backdrop-filter: none !important;",
             "  -webkit-backdrop-filter: none !important;",
-            "  overflow: visible !important;",
+            "}",
+            "",
+            # Vuetify 切换标签时会同时渲染进场和离场页面，
+            # 窗口必须裁剪位移到框外的内容，否则两页会在动画期间同时可见。
+            "html.astrbot-palette-active #app .v-main .config-panel .config-tabs-window.v-window {",
+            "  overflow: hidden !important;",
             "}",
             "",
             "html.astrbot-palette-active #app .v-main .config-page .config-section,",
@@ -1828,6 +1840,174 @@ def _settings_surface_css() -> str:
             f"  background: {primary_soft} !important;",
             "  box-shadow: none !important;",
             f"  border-color: {border} !important;",
+            "}",
+        ]
+    )
+
+
+def _component_management_surface_css(stats_card_blur: int) -> str:
+    blur = max(0, min(40, stats_card_blur))
+    glass_enabled = blur > 0
+    surface = (
+        "rgba(var(--v-theme-surface), "
+        "calc(0.42 + var(--astrbot-palette-surface-opacity, 0) * 0.32))"
+        if glass_enabled
+        else "transparent"
+    )
+    error_surface = (
+        "rgba(var(--v-theme-error), "
+        "calc(0.12 + var(--astrbot-palette-surface-opacity, 0) * 0.14))"
+        if glass_enabled
+        else "transparent"
+    )
+    border = (
+        "rgba(var(--v-theme-on-surface), "
+        "calc(0.20 + var(--astrbot-palette-surface-opacity, 0) * 0.12))"
+        if glass_enabled
+        else "transparent"
+    )
+    shadow = (
+        "0 16px 36px rgba(0, 0, 0, 0.22), "
+        "inset 0 1px 0 rgba(255, 255, 255, 0.10)"
+        if glass_enabled
+        else "none"
+    )
+    field_shadow = (
+        "0 8px 22px rgba(0, 0, 0, 0.14), "
+        "inset 0 1px 0 rgba(255, 255, 255, 0.08)"
+        if glass_enabled
+        else "none"
+    )
+    scopes = [
+        (
+            "html.astrbot-palette-active #app .v-main "
+            ".v-card:has(.system-plugin-checkbox)"
+        ),
+        (
+            "html.astrbot-palette-active #app .v-main "
+            ".v-card:has(.builtin-tools-checkbox)"
+        ),
+    ]
+    component_surfaces = [
+        (
+            f"{scope} > .v-card-text > "
+            ".d-flex.justify-space-between.align-center.mb-6 > .v-btn-toggle"
+        )
+        for scope in scopes
+    ]
+    fields = [f"{scope} .v-field" for scope in scopes]
+    field_overlays = [f"{scope} .v-field .v-field__overlay" for scope in scopes]
+    alerts = [f"{scope} .v-alert.mb-4" for scope in scopes]
+    alert_underlays = [f"{scope} .v-alert.mb-4 .v-alert__underlay" for scope in scopes]
+    table_shells = [
+        f"{scope} .v-card.rounded-lg.overflow-hidden.elevation-1"
+        for scope in scopes
+    ]
+    table_layers = [f"{table_shell}::before" for table_shell in table_shells]
+    table_roots = [f"{table_shell} > .v-data-table" for table_shell in table_shells]
+    table_overlays = [f"{table_shell} > .v-card__overlay" for table_shell in table_shells]
+    table_footer_fields = [
+        f"{table_shell} .v-data-table-footer .v-field"
+        for table_shell in table_shells
+    ]
+    table_internals = []
+    for table_shell in table_shells:
+        table_internals.extend(
+            [
+                f"{table_shell} .v-table__wrapper",
+                f"{table_shell} table",
+                f"{table_shell} thead",
+                f"{table_shell} tbody",
+                f"{table_shell} th",
+                f"{table_shell} td",
+                f"{table_shell} .v-data-table-footer",
+            ]
+        )
+    return "\n".join(
+        [
+            ",\n".join(component_surfaces) + " {",
+            f"  background: {surface} !important;",
+            f"  background-color: {surface} !important;",
+            f"  border-color: {border} !important;",
+            f"  box-shadow: {shadow} !important;",
+            *_backdrop_filter_lines(blur),
+            "}",
+            "",
+            ",\n".join(fields) + " {",
+            f"  background: {surface} !important;",
+            f"  background-color: {surface} !important;",
+            f"  border-color: {border} !important;",
+            "  border-radius: 14px !important;",
+            f"  box-shadow: {field_shadow} !important;",
+            *_backdrop_filter_lines(blur),
+            "}",
+            "",
+            ",\n".join(field_overlays) + " {",
+            "  background: transparent !important;",
+            "  opacity: 0 !important;",
+            "}",
+            "",
+            ",\n".join(alerts) + " {",
+            f"  background: {error_surface} !important;",
+            f"  background-color: {error_surface} !important;",
+            f"  box-shadow: {shadow} !important;",
+            *_backdrop_filter_lines(blur),
+            "}",
+            "",
+            ",\n".join(alert_underlays) + " {",
+            "  opacity: 0 !important;",
+            "}",
+            "",
+            ",\n".join(table_shells) + " {",
+            "  position: relative !important;",
+            "  isolation: isolate !important;",
+            "  background: transparent !important;",
+            "  background-color: transparent !important;",
+            f"  border: 1px solid {border} !important;",
+            f"  box-shadow: {shadow} !important;",
+            "  backdrop-filter: none !important;",
+            "  -webkit-backdrop-filter: none !important;",
+            "}",
+            "",
+            ",\n".join(table_layers) + " {",
+            "  content: \"\" !important;",
+            "  position: absolute !important;",
+            "  inset: 0 !important;",
+            "  z-index: 0 !important;",
+            "  pointer-events: none !important;",
+            "  border-radius: inherit !important;",
+            f"  background: {surface} !important;",
+            f"  background-color: {surface} !important;",
+            *_backdrop_filter_lines(blur),
+            "}",
+            "",
+            ",\n".join(table_roots) + " {",
+            "  position: relative !important;",
+            "  z-index: 1 !important;",
+            "  background: transparent !important;",
+            "  background-color: transparent !important;",
+            "  box-shadow: none !important;",
+            "  backdrop-filter: none !important;",
+            "  -webkit-backdrop-filter: none !important;",
+            "}",
+            "",
+            ",\n".join(table_overlays) + " {",
+            "  display: none !important;",
+            "}",
+            "",
+            ",\n".join(table_internals) + " {",
+            "  background: transparent !important;",
+            "  background-color: transparent !important;",
+            "  box-shadow: none !important;",
+            "  backdrop-filter: none !important;",
+            "  -webkit-backdrop-filter: none !important;",
+            "}",
+            "",
+            # 分页选择器位于表格玻璃内，不再叠加第二层滤镜和阴影。
+            ",\n".join(table_footer_fields) + " {",
+            "  box-shadow: none !important;",
+            "  backdrop-filter: none !important;",
+            "  -webkit-backdrop-filter: none !important;",
             "}",
         ]
     )

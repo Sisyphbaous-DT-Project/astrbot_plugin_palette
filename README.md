@@ -4,7 +4,7 @@ AstrBot调色盘是一个 AstrBot WebUI 美化插件。当前版本聚焦于背�
 
 当前已测试兼容 AstrBot `4.26.7`。
 
-> 当前版本：`0.4.9`
+> 当前版本：`0.4.10`
 >
 > 兼容 AstrBot：`>=4.26.0-beta1`，已测试兼容 `4.26.7`
 
@@ -15,7 +15,7 @@ AstrBot调色盘是一个 AstrBot WebUI 美化插件。当前版本聚焦于背�
 - 支持打开或刷新 WebUI 时从当前方向图库随机切换背景。
 - 调整背景填充方式、位置、遮罩、模糊、灰度、亮度、对比度和饱和度。
 - 将 Dashboard 常驻面板透明化，支持完全透明的悬浮文字效果。
-- 统计、平台、提供商、插件和配置页面的主要信息框支持可配置毛玻璃强度，`0` 表示关闭整套毛玻璃装饰并恢复全透明。
+- 主要信息框、组件管理页面和侧栏当前选中项支持统一调节毛玻璃强度；设为 `0` 时关闭新增玻璃装饰，信息框和组件管理表面恢复透明，侧栏仍保留原有选中底色。
 - 提供文字和图标可读性增强，包括柔和阴影和强力描边。
 - 自动读取当前壁纸主题色，并同步 AstrBot 主色与辅色。
 - 提供 Apple-like Liquid Glass 风格的分标签插件设置页，可在插件详情页中直接配置。
@@ -53,7 +53,7 @@ git clone https://github.com/Sisyphbaous-DT-Project/astrbot_plugin_palette.git
 
 - 插件名：`astrbot_plugin_palette`
 - 展示名：`AstrBot调色盘`
-- 版本：`0.4.9`
+- 版本：`0.4.10`
 
 ## 使用
 
@@ -91,7 +91,7 @@ git clone https://github.com/Sisyphbaous-DT-Project/astrbot_plugin_palette.git
 | `background_blur` | 背景模糊强度，单位 px | `0` |
 | `background_dim` | 全局暗色遮罩强度 | `0.5` |
 | `surface_opacity` | 常驻面板底色强度，`0` 为透明 | `0.0` |
-| `stats_card_blur` | 统计、平台、提供商、插件和配置页面主要信息框的毛玻璃强度，范围 `0`–`40` px，`0` 表示同时关闭模糊、半透明底色、边框和阴影，让信息框恢复全透明 | `14` |
+| `stats_card_blur` | 主要信息框、组件管理页面和侧栏当前选中项的毛玻璃强度，范围 `0`–`40` px；`0` 表示关闭新增的模糊与玻璃装饰，让信息框和组件管理表面恢复透明，同时保留侧栏原有选中底色 | `14` |
 | `text_enhancement_mode` | 文字增强模式，可选 `off`、`soft_shadow`、`stroke` | `soft_shadow` |
 | `text_enhancement_strength` | 文字增强强度 | `1.0` |
 | `background_grayscale` | 背景灰度 | `0.0` |
@@ -277,6 +277,8 @@ git diff --check
 `0.4.8` 已测试兼容 AstrBot `4.26.6`，核心插件 API、设置页桥接、WebUI 注入路径和系统统计增强均保持可用。
 
 `0.4.9` 为主要信息框增加可配置毛玻璃效果，支持用 `stats_card_blur=0` 恢复全透明，并已测试兼容 AstrBot `4.26.7`。
+
+`0.4.10` 将毛玻璃效果扩展到组件管理页面和侧栏当前选中项，并修复配置页切换标签时新旧页面短暂同时显示的问题；固定按钮定位保持不变。
 
 后续版本会继续补齐更多页面的透明化细节，并探索更完整的主题色板推导。
 

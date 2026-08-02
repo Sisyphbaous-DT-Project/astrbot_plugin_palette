@@ -162,6 +162,164 @@ class ConfigPanelSafetyTest(unittest.TestCase):
         self.assertTrue(bodies, "未找到 .config-panel::before 玻璃层规则")
         self.assertTrue(any("blur(14px)" in body for body in bodies))
 
+    def test_config_tabs_window_clips_overflow(self) -> None:
+        for blur in (0, 14, 40):
+            css = _css({"stats_card_blur": blur})
+            bodies = _rules_bodies(css, ".config-tabs-window.v-window")
+            self.assertTrue(
+                any("overflow: hidden !important;" in body for body in bodies),
+                f"stats_card_blur={blur} 时配置标签窗口缺少 overflow: hidden 裁剪",
+            )
+
+    def test_config_window_selectors_no_overflow_visible(self) -> None:
+        css = _css()
+        for suffix in (
+            ".config-tabs-window.v-window",
+            ".config-panel .v-window",
+            ".v-window__container",
+            ".v-window-item",
+            ".v-tabs-window-item",
+        ):
+            bodies = _rules_bodies(css, suffix)
+            self.assertTrue(bodies, f"未找到以 {suffix} 结尾的规则")
+            for body in bodies:
+                self.assertNotIn(
+                    "overflow: visible",
+                    body,
+                    f"{suffix} 规则不允许再出现 overflow: visible: {body}",
+                )
+
+    def test_config_panel_keeps_overflow_visible(self) -> None:
+        bodies = _rules_bodies(_css(), ".config-panel")
+        self.assertTrue(
+            any("overflow: visible !important;" in body for body in bodies),
+            ".config-panel 必须保留 overflow: visible 以容纳固定按钮",
+        )
+
+
+class ComponentManagementGlassTest(unittest.TestCase):
+    table_shell_suffix = ".v-card.rounded-lg.overflow-hidden.elevation-1"
+
+    def test_management_scopes_cover_commands_and_tools(self) -> None:
+        css = _css()
+        self.assertIn(".v-card:has(.system-plugin-checkbox)", css)
+        self.assertIn(".v-card:has(.builtin-tools-checkbox)", css)
+
+    def test_management_table_uses_isolated_glass_layer(self) -> None:
+        css = _css({"stats_card_blur": 14})
+        shell_bodies = _rules_bodies(css, self.table_shell_suffix)
+        layer_bodies = _rules_bodies(css, f"{self.table_shell_suffix}::before")
+        root_bodies = _rules_bodies(css, f"{self.table_shell_suffix} > .v-data-table")
+        overlay_bodies = _rules_bodies(css, f"{self.table_shell_suffix} > .v-card__overlay")
+
+        self.assertTrue(
+            any(
+                "position: relative !important;" in body
+                and "isolation: isolate !important;" in body
+                and "backdrop-filter: none !important;" in body
+                for body in shell_bodies
+            ),
+            "组件管理表格外壳缺少隔离层约束",
+        )
+        self.assertTrue(
+            any(
+                'content: "" !important;' in body
+                and "z-index: 0 !important;" in body
+                and "pointer-events: none !important;" in body
+                and "blur(14px) saturate(1.08)" in body
+                for body in layer_bodies
+            ),
+            "组件管理表格伪元素没有安全承载毛玻璃",
+        )
+        self.assertTrue(
+            any(
+                "z-index: 1 !important;" in body
+                and "backdrop-filter: none !important;" in body
+                for body in root_bodies
+            ),
+            "组件管理数据表内容层没有保持在玻璃层上方",
+        )
+        self.assertTrue(
+            any("display: none !important;" in body for body in overlay_bodies),
+            "组件管理表格仍保留 Vuetify overlay",
+        )
+
+    def test_management_and_sidebar_follow_blur_values(self) -> None:
+        for blur in (0, 14, 40):
+            css = _css({"stats_card_blur": blur})
+            layer_bodies = _rules_bodies(css, f"{self.table_shell_suffix}::before")
+            sidebar_bodies = _rules_bodies(
+                css,
+                ".v-navigation-drawer .v-list-item--active",
+            )
+            expected = (
+                "backdrop-filter: none !important;"
+                if blur == 0
+                else f"backdrop-filter: blur({blur}px) saturate(1.08) !important;"
+            )
+            self.assertTrue(
+                any(expected in body for body in layer_bodies),
+                f"stats_card_blur={blur} 时组件管理表格滤镜不正确",
+            )
+            self.assertTrue(
+                any(expected in body for body in sidebar_bodies),
+                f"stats_card_blur={blur} 时侧栏选中项滤镜不正确",
+            )
+            if blur == 0:
+                filter_bodies = [
+                    body
+                    for body in sidebar_bodies
+                    if "backdrop-filter: none !important;" in body
+                ]
+                self.assertTrue(filter_bodies, "未找到侧栏选中项的滤镜关闭规则")
+                for body in filter_bodies:
+                    self.assertNotIn("background:", body)
+                    self.assertNotIn("background-color:", body)
+
+    def test_management_glass_decoration_disables_at_zero(self) -> None:
+        css = _css({"stats_card_blur": 0})
+        selector_suffixes = (
+            (
+                ".v-card:has(.builtin-tools-checkbox) > .v-card-text > "
+                ".d-flex.justify-space-between.align-center.mb-6 > .v-btn-toggle"
+            ),
+            ".v-card:has(.builtin-tools-checkbox) .v-field",
+            ".v-card:has(.system-plugin-checkbox) .v-alert.mb-4",
+            self.table_shell_suffix,
+            f"{self.table_shell_suffix}::before",
+        )
+        for suffix in selector_suffixes:
+            bodies = _rules_bodies(css, suffix)
+            self.assertTrue(bodies, f"未找到组件管理规则：{suffix}")
+            if suffix.endswith("::before"):
+                self.assertTrue(
+                    any(
+                        "background: transparent !important;" in body
+                        and "backdrop-filter: none !important;" in body
+                        for body in bodies
+                    ),
+                    f"stats_card_blur=0 时 {suffix} 未关闭底色或滤镜",
+                )
+            else:
+                self.assertTrue(
+                    any(
+                        "background: transparent !important;" in body
+                        and "box-shadow: none !important;" in body
+                        for body in bodies
+                    ),
+                    f"stats_card_blur=0 时 {suffix} 未关闭底色或阴影",
+                )
+
+    def test_management_pagination_field_does_not_stack_blur(self) -> None:
+        css = _css({"stats_card_blur": 40})
+        bodies = _rules_bodies(css, ".v-data-table-footer .v-field")
+        self.assertTrue(bodies, "未找到组件管理表格分页字段覆盖规则")
+        for body in bodies:
+            self.assertIn("box-shadow: none !important;", body)
+            self.assertIn("backdrop-filter: none !important;", body)
+            self.assertIn("-webkit-backdrop-filter: none !important;", body)
+            self.assertNotIn("blur(", body)
+
 
 class PluginDetailSelectorTest(unittest.TestCase):
     def test_detail_page_selectors_exist(self) -> None:

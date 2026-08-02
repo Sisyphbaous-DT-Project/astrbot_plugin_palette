@@ -892,6 +892,13 @@ output {
   font-weight: 520;
 }
 
+.control-hint {
+  color: var(--ab-ink-muted);
+  font-size: 12px;
+  font-weight: 520;
+  line-height: 1.55;
+}
+
 select,
 textarea {
   color: var(--ab-ink);
