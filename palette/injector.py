@@ -21,13 +21,23 @@ from .paths import PalettePaths
 
 try:
     from astrbot.core.config.default import VERSION as ASTRBOT_VERSION
+except Exception:  # pragma: no cover - 兼容缺少 AstrBot 的环境
+    ASTRBOT_VERSION = ""
+
+try:
+    # AstrBot 4.27.x 起的公开 Dashboard 目录解析器
+    from astrbot.core.dashboard_assets import resolve_dashboard_dist
+except Exception:  # pragma: no cover - 兼容 4.26.x 及更早版本
+    resolve_dashboard_dist = None
+
+try:
+    # AstrBot 4.26.x 的旧版 Dashboard 辅助函数
     from astrbot.core.utils.io import (
         get_bundled_dashboard_dist_path,
         is_dashboard_dist_compatible,
         should_use_bundled_dashboard_dist,
     )
-except Exception:  # pragma: no cover - 兼容旧版 AstrBot
-    ASTRBOT_VERSION = ""
+except Exception:  # pragma: no cover - 兼容 4.27.x 及更早版本
     get_bundled_dashboard_dist_path = None
     is_dashboard_dist_compatible = None
     should_use_bundled_dashboard_dist = None
@@ -162,9 +172,14 @@ def ensure_dashboard_injection(paths: PalettePaths) -> InjectionStatus:
 
 
 def inspect_injection(paths: PalettePaths) -> InjectionStatus:
-    """检测 WebUI 运行时补丁状态。"""
+    """检测 WebUI 运行时补丁状态。
 
-    target = _resolve_dashboard_target(paths, allow_copy_fallback=False)
+    只读检测也必须识别已准备的 data/dist 回退；否则会把待重启状态误报为
+    正常，并在 `_inspect_target` 中误删重启标记。该参数只控制是否识别
+    已准备回退，不会触发任何复制或写入。
+    """
+
+    target = _resolve_dashboard_target(paths, allow_copy_fallback=True)
     return _inspect_target(target)
 
 
@@ -281,15 +296,37 @@ def _resolve_dashboard_target(
 ) -> DashboardTarget:
     custom_dist = _custom_dashboard_dist()
     if custom_dist is not None:
-        return _target_from_dist(custom_dist, "custom")
+        return _target_from_dist(
+            custom_dist,
+            "custom",
+            compatible=_compatibility(custom_dist),
+        )
 
-    user_target = _target_from_dist(paths.user_dashboard_dist, "data/dist")
+    resolved_dist = _resolve_with_public_resolver()
+    if resolved_dist is not None:
+        # 4.27.x 公开解析器已完成版本选择，不再重复判断兼容性
+        if _same_dashboard_dist(resolved_dist, paths.user_dashboard_dist):
+            if allow_copy_fallback and _is_prepared_fallback(paths):
+                return _target_from_dist(
+                    paths.user_dashboard_dist,
+                    "data/dist",
+                    restart_required=True,
+                )
+            return _target_from_dist(paths.user_dashboard_dist, "data/dist")
+        return _target_from_dist(resolved_dist, "bundled")
+
+    user_target = _target_from_dist(
+        paths.user_dashboard_dist,
+        "data/dist",
+        compatible=_compatibility(paths.user_dashboard_dist),
+    )
     if _is_compatible(user_target.dist):
         if allow_copy_fallback and _is_prepared_fallback(paths):
             bundled_target = _bundled_dashboard_target()
             return _target_from_dist(
                 paths.user_dashboard_dist,
                 "data/dist",
+                compatible=_compatibility(paths.user_dashboard_dist),
                 restart_required=True,
                 fallback_target=str(bundled_target.dist) if bundled_target else "",
             )
@@ -305,10 +342,32 @@ def _resolve_dashboard_target(
     return user_target
 
 
+def _resolve_with_public_resolver() -> Path | None:
+    """通过 AstrBot 4.27.x 公开解析器获取实际服务的 Dashboard 目录。"""
+
+    if resolve_dashboard_dist is None:
+        return None
+    try:
+        dist = resolve_dashboard_dist()
+    except Exception:
+        return None
+    if dist is None:
+        return None
+    return Path(dist)
+
+
+def _same_dashboard_dist(left: Path, right: Path) -> bool:
+    try:
+        return left.resolve() == right.resolve()
+    except OSError:
+        return left.absolute() == right.absolute()
+
+
 def _target_from_dist(
     dist: Path,
     source: str,
     *,
+    compatible: bool | None = None,
     restart_required: bool = False,
     fallback_target: str = "",
 ) -> DashboardTarget:
@@ -316,7 +375,7 @@ def _target_from_dist(
         dist=dist,
         index=dist / "index.html",
         source=source,
-        compatible=_compatibility(dist),
+        compatible=compatible,
         restart_required=restart_required,
         fallback_target=fallback_target,
     )
@@ -357,7 +416,7 @@ def _bundled_dashboard_target() -> DashboardTarget | None:
         dist = Path(get_bundled_dashboard_dist_path())
     except Exception:
         return None
-    return _target_from_dist(dist, "bundled")
+    return _target_from_dist(dist, "bundled", compatible=_compatibility(dist))
 
 
 def _compatibility(dist: Path) -> bool | None:
@@ -432,6 +491,7 @@ def _prepare_user_dist_fallback(
     return _target_from_dist(
         paths.user_dashboard_dist,
         "data/dist",
+        compatible=_compatibility(paths.user_dashboard_dist),
         restart_required=True,
         fallback_target=str(source_target.dist),
     )

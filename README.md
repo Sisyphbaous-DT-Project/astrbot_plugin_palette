@@ -2,11 +2,11 @@
 
 AstrBot调色盘是一个 AstrBot WebUI 美化插件。当前版本聚焦于背景图库、透明界面、Liquid Glass 设置页、文字可读性增强和壁纸主题色联动，让 Dashboard 可以在不修改 AstrBot 源码的前提下换上自定义壁纸。
 
-当前已测试兼容 AstrBot `4.26.7`。
+当前已测试兼容 AstrBot `4.27.1`。
 
-> 当前版本：`0.4.10`
+> 当前版本：`0.4.11`
 >
-> 兼容 AstrBot：`>=4.26.0-beta1`，已测试兼容 `4.26.7`
+> 兼容 AstrBot：`>=4.26.0-beta1`，已测试兼容 `4.27.1`
 
 ## 功能
 
@@ -53,7 +53,7 @@ git clone https://github.com/Sisyphbaous-DT-Project/astrbot_plugin_palette.git
 
 - 插件名：`astrbot_plugin_palette`
 - 展示名：`AstrBot调色盘`
-- 版本：`0.4.10`
+- 版本：`0.4.11`
 
 ## 使用
 
@@ -160,7 +160,7 @@ Dashboard 会监听视口方向变化。浏览器从竖屏切到横屏时，会�
 
 本插件不会修改 AstrBot 源码。
 
-为了让 Dashboard 主页面能加载插件主题，本插件会在运行时向 AstrBot 当前实际服务的 WebUI 入口注入一段带标记的启动脚本。插件会优先跟随 `--webui-dir` 指定目录，其次使用兼容的 `data/dist`，桌面端或新版本 AstrBot 使用内置 WebUI 时会自动注入内置 `astrbot/dashboard/dist`。
+为了让 Dashboard 主页面能加载插件主题，本插件会在运行时向 AstrBot 当前实际服务的 WebUI 入口注入一段带标记的启动脚本。插件会优先跟随 `--webui-dir` 指定目录；AstrBot `4.27.x` 起跟随其公开 `resolve_dashboard_dist` 的目录选择结果，`4.26.x` 则沿用旧版辅助函数判断，从而同时覆盖兼容的 `data/dist` 和内置 `astrbot/dashboard/dist`。
 
 如果内置 WebUI 目录不可写，插件会复制一份内置 WebUI 到 `data/dist` 并完成注入，设置页会提示需要重启 AstrBot 后生效。注入前会在插件数据目录中备份原始 `index.html`，之后重复注入会替换已有标记块，避免重复写入。
 
@@ -279,6 +279,8 @@ git diff --check
 `0.4.9` 为主要信息框增加可配置毛玻璃效果，支持用 `stats_card_blur=0` 恢复全透明，并已测试兼容 AstrBot `4.26.7`。
 
 `0.4.10` 将毛玻璃效果扩展到组件管理页面和侧栏当前选中项，并修复配置页切换标签时新旧页面短暂同时显示的问题；固定按钮定位保持不变。
+
+`0.4.11` 修复 AstrBot `4.27.x` 下 Dashboard 路径识别问题，跟随 AstrBot 公开解析结果注入实际服务的 WebUI 入口，保留 `4.26.x` 旧接口兼容，并已确认兼容 AstrBot `4.27.1`。
 
 后续版本会继续补齐更多页面的透明化细节，并探索更完整的主题色板推导。
 
