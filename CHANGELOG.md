@@ -1,5 +1,22 @@
 # 更新日志
 
+## 0.4.12
+
+### 新增
+
+- 新增定时轮换背景：独立开关 `background_rotation_enabled` 与间隔配置 `background_rotation_interval_minutes`（1～1440 分钟，默认 30），按当前视口方向图库随机切换且不连续重复当前图，轮换结果写回全局配置；页面隐藏时暂停，恢复可见后重新等待完整间隔，不补播错过次数；图库只剩当前一张图时静默跳过。
+- 同一浏览器（同源）多个 WebUI 标签页通过 Web Locks 持续领导权协调轮换，不支持时降级为 localStorage 租约；其余标签页通过 BroadcastChannel 和 storage 事件同步叠化到新壁纸。
+- Dashboard 背景 object URL 缓存改为上限 4 的保护型 LRU：只淘汰未被当前图层、叠化图层和在途请求引用的 URL，长时间轮播不再把整个图库原图留在内存。
+
+### 测试
+
+- 新增轮换配置、定时随机接口、设置页静态接入和 Dashboard bootstrap 脚本回归测试，覆盖旧配置默认值、间隔边界、单图静默跳过、跨标签协调结构、可见性生命周期和对象 URL 缓存保护。
+
+### 兼容性
+
+- 复用 `POST /astrbot_plugin_palette/backgrounds/random-select`，新增可选请求字段 `scheduled`，未传时行为与之前完全一致；旧配置读取时自动使用新字段默认值，无需迁移。
+- 最低兼容版本仍为 `>=4.26.0-beta1`，已确认兼容 AstrBot `4.27.2`。
+
 ## 0.4.11
 
 ### 修复

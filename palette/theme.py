@@ -68,7 +68,7 @@ def build_theme_css(config: dict[str, Any]) -> str:
 
     return "\n".join(
         [
-            "/* AstrBot调色盘 0.4.11 运行时主题 CSS */",
+            "/* AstrBot调色盘 0.4.12 运行时主题 CSS */",
             ":root {",
             f"  --astrbot-palette-enabled: {enabled};",
             "  --astrbot-palette-background-image: none;",

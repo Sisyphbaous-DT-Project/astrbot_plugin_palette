@@ -130,6 +130,25 @@
     "default": false,
     "hint": "开启后每次打开或刷新 AstrBot WebUI 会从图库随机选一张背景，并写回当前背景。"
   },
+  "background_rotation_enabled": {
+    "description": "定时轮换背景",
+    "type": "bool",
+    "default": false,
+    "hint": "开启后按设定间隔从当前视口方向的图库随机切换背景（不连续重复当前图）；页面隐藏时暂停。"
+  },
+  "background_rotation_interval_minutes": {
+    "description": "定时轮换间隔（分钟）",
+    "type": "int",
+    "default": 30,
+    "minimum": 1,
+    "maximum": 1440,
+    "slider": {
+      "min": 1,
+      "max": 1440,
+      "step": 1
+    },
+    "hint": "取值 1 到 1440 分钟；同一浏览器的多个 WebUI 标签页只会有一个负责轮换。"
+  },
   "auto_theme_enabled": {
     "description": "自动同步壁纸主题色",
     "type": "bool",

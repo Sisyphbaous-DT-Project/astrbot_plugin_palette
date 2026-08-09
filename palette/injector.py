@@ -641,18 +641,28 @@ def _build_bootstrap_script(
     var PREVIOUS_DARKPRIMARY_RGB_KEY = "astrbot_palette_theme_previous_darkprimary_rgb";
     var PREVIOUS_DARKSECONDARY_RGB_KEY = "astrbot_palette_theme_previous_darksecondary_rgb";
     var BACKGROUND_CONTAINER_ID = "astrbot-palette-background";
+    var ROTATION_LOCK_NAME = "astrbot-palette-background-rotation-leader";
+    var SYNC_CHANNEL_NAME = "astrbot-palette-sync";
+    var ROTATION_LEASE_KEY = "astrbot_palette_rotation_lease";
+    var SYNC_EVENT_KEY = "astrbot_palette_sync_event";
+    var ROTATION_LEASE_TTL_MS = 15000;
+    var ROTATION_LEASE_RENEW_MS = 5000;
+    var MAX_BACKGROUND_OBJECT_URLS = 4;
     var lastToken = null;
-    var lastBackgroundUrl = "";
-    var lastBackgroundObjectUrl = "";
     var currentBackgroundUrl = "";
     var currentObjectUrl = "";
-    var backgroundObjectUrlCache = {{}};
+    var backgroundObjectUrlCache = new Map();
+    var backgroundCacheGeneration = 0;
     var backgroundDecodedUrlCache = {{}};
+    var backgroundInUseObjectUrls = {{}};
+    var backgroundInFlightObjectUrls = {{}};
     var backgroundActiveLayer = null;
     var backgroundRequestSeq = 0;
     var backgroundTransitionToken = 0;
     var backgroundResizeTimer = 0;
     var lastConfig = null;
+    var lastAppliedOrientation = "";
+    var initialRandomJustApplied = false;
     var restoredThemeStyleActive = false;
     var restoredThemePrimary = "";
     var restoredThemeSecondary = "";
@@ -666,8 +676,18 @@ def _build_bootstrap_script(
     var tokenStatsLastFetchAt = 0;
     var tokenStatsMutationMuted = false;
     var loading = false;
-    var pendingRefresh = false;
+    var pendingRefreshOptions = null;
     var initialRandomPending = true;
+    var rotationTimer = 0;
+    var rotationInFlight = false;
+    var rotationLeadership = null;
+    var rotationLeaseRetryTimer = 0;
+    var rotationLeaseRenewTimer = 0;
+    var rotationUnavailableWarned = false;
+    var rotationOwnerId = Math.random().toString(36).slice(2) + Date.now().toString(36);
+    var paletteSyncChannel = null;
+    var seenSyncMessageIds = {{}};
+    var seenSyncMessageIdCount = 0;
 
     function bootstrapRecommendedDarkTheme() {{
       try {{
@@ -791,18 +811,109 @@ def _build_bootstrap_script(
 
     function revokeObjectUrls() {{
       backgroundRequestSeq += 1;
-      Object.keys(backgroundObjectUrlCache).forEach(function (url) {{
+      // 递增缓存代数：在途下载完成后发现代数变化必须丢弃，不得把新
+      // 对象 URL 重新填入已整体回收的缓存。
+      backgroundCacheGeneration += 1;
+      backgroundObjectUrlCache.forEach(function (objectUrl) {{
         try {{
-          URL.revokeObjectURL(backgroundObjectUrlCache[url]);
+          URL.revokeObjectURL(objectUrl);
         }} catch (_) {{
         }}
       }});
-      backgroundObjectUrlCache = {{}};
+      backgroundObjectUrlCache.clear();
       backgroundDecodedUrlCache = {{}};
-      lastBackgroundUrl = "";
-      lastBackgroundObjectUrl = "";
+      backgroundInUseObjectUrls = {{}};
+      backgroundInFlightObjectUrls = {{}};
       currentBackgroundUrl = "";
       currentObjectUrl = "";
+    }}
+
+    function markObjectUrlInUse(objectUrl) {{
+      // 引用计数：同一 URL 可被多个图层/消费者同时引用，
+      // 必须全部解除后才允许淘汰。
+      if (objectUrl) {{
+        backgroundInUseObjectUrls[objectUrl] =
+          (backgroundInUseObjectUrls[objectUrl] || 0) + 1;
+      }}
+    }}
+
+    function unmarkObjectUrlInUse(objectUrl) {{
+      if (!objectUrl) {{
+        return;
+      }}
+      var inUseCount = backgroundInUseObjectUrls[objectUrl] || 0;
+      if (inUseCount > 1) {{
+        backgroundInUseObjectUrls[objectUrl] = inUseCount - 1;
+      }} else {{
+        delete backgroundInUseObjectUrls[objectUrl];
+      }}
+    }}
+
+    function markObjectUrlInFlight(objectUrl) {{
+      // 引用计数：并发消费者各自持有在途标记，任一解除不得
+      // 提前暴露其他消费者仍在解码的 URL。
+      if (objectUrl) {{
+        backgroundInFlightObjectUrls[objectUrl] =
+          (backgroundInFlightObjectUrls[objectUrl] || 0) + 1;
+      }}
+    }}
+
+    function unmarkObjectUrlInFlight(objectUrl) {{
+      if (!objectUrl) {{
+        return;
+      }}
+      var inFlightCount = backgroundInFlightObjectUrls[objectUrl] || 0;
+      if (inFlightCount > 1) {{
+        backgroundInFlightObjectUrls[objectUrl] = inFlightCount - 1;
+      }} else {{
+        delete backgroundInFlightObjectUrls[objectUrl];
+      }}
+    }}
+
+    function isObjectUrlProtected(objectUrl) {{
+      return (
+        objectUrl === currentObjectUrl ||
+        Boolean(backgroundInUseObjectUrls[objectUrl]) ||
+        Boolean(backgroundInFlightObjectUrls[objectUrl])
+      );
+    }}
+
+    function getCachedObjectUrl(url) {{
+      if (!backgroundObjectUrlCache.has(url)) {{
+        return "";
+      }}
+      // 命中时移动到 Map 尾部，维持 LRU 顺序。
+      var objectUrl = backgroundObjectUrlCache.get(url);
+      backgroundObjectUrlCache.delete(url);
+      backgroundObjectUrlCache.set(url, objectUrl);
+      return objectUrl;
+    }}
+
+    function evictObjectUrlCache() {{
+      // 只淘汰最旧且未受保护的条目；全部受保护时允许临时超过上限。
+      while (backgroundObjectUrlCache.size > MAX_BACKGROUND_OBJECT_URLS) {{
+        var evicted = false;
+        for (var entry of backgroundObjectUrlCache) {{
+          var url = entry[0];
+          var objectUrl = entry[1];
+          if (isObjectUrlProtected(objectUrl)) {{
+            continue;
+          }}
+          backgroundObjectUrlCache.delete(url);
+          if (backgroundDecodedUrlCache[objectUrl]) {{
+            delete backgroundDecodedUrlCache[objectUrl];
+          }}
+          try {{
+            URL.revokeObjectURL(objectUrl);
+          }} catch (_) {{
+          }}
+          evicted = true;
+          break;
+        }}
+        if (!evicted) {{
+          break;
+        }}
+      }}
     }}
 
     function removeBackgroundContainer() {{
@@ -847,9 +958,20 @@ def _build_bootstrap_script(
 
     function nextBackgroundFrame() {{
       return new Promise(function (resolve) {{
+        var finished = false;
+        var finish = function () {{
+          if (finished) {{
+            return;
+          }}
+          finished = true;
+          resolve();
+        }};
         window.requestAnimationFrame(function () {{
-          window.requestAnimationFrame(resolve);
+          window.requestAnimationFrame(finish);
         }});
+        // 页面隐藏时 RAF 可能暂停，短超时兜底，避免叠化 await 悬挂
+        // 导致轮换 in-flight 与 Web Lock 领导权无法释放。
+        window.setTimeout(finish, 200);
       }});
     }}
 
@@ -879,6 +1001,22 @@ def _build_bootstrap_script(
       return promise;
     }}
 
+    function setLayerObjectUrl(layer, objectUrl) {{
+      // 图层引用的 URL 纳入淘汰保护；旧引用在替换或清空时解除。
+      // 引用计数必须按图层配平：同一图层重复设置同一 URL 不得重复计数。
+      var nextUrl = objectUrl || "";
+      if (layer.__paletteObjectUrl !== nextUrl) {{
+        if (layer.__paletteObjectUrl) {{
+          unmarkObjectUrlInUse(layer.__paletteObjectUrl);
+        }}
+        layer.__paletteObjectUrl = nextUrl;
+        if (nextUrl) {{
+          markObjectUrlInUse(nextUrl);
+        }}
+      }}
+      layer.style.backgroundImage = nextUrl ? 'url("' + nextUrl + '")' : "none";
+    }}
+
     async function applyBackgroundLayer(objectUrl, animate, isCurrent) {{
       var container = ensureBackgroundContainer();
       var layers = container.querySelectorAll(".astrbot-palette-background-layer");
@@ -901,7 +1039,7 @@ def _build_bootstrap_script(
           return false;
         }});
       }}
-      nextLayer.style.backgroundImage = objectUrl ? 'url("' + objectUrl + '")' : "none";
+      setLayerObjectUrl(nextLayer, objectUrl);
       if (animate && currentLayer && currentLayer !== nextLayer) {{
         var transitionToken = backgroundTransitionToken + 1;
         backgroundTransitionToken = transitionToken;
@@ -914,7 +1052,8 @@ def _build_bootstrap_script(
           (isCurrent && !isCurrent())
         ) {{
           nextLayer.classList.remove("is-active");
-          nextLayer.style.backgroundImage = "none";
+          setLayerObjectUrl(nextLayer, "");
+          evictObjectUrlCache();
           return false;
         }}
         nextLayer.classList.add("is-active");
@@ -925,8 +1064,9 @@ def _build_bootstrap_script(
             backgroundTransitionToken === transitionToken &&
             !currentLayer.classList.contains("is-active")
           ) {{
-            currentLayer.style.backgroundImage = "none";
+            setLayerObjectUrl(currentLayer, "");
           }}
+          evictObjectUrlCache();
         }}, 760);
       }} else {{
         backgroundTransitionToken += 1;
@@ -935,10 +1075,11 @@ def _build_bootstrap_script(
           var isNextLayer = layer === nextLayer;
           layer.classList.toggle("is-active", isNextLayer);
           if (!isNextLayer) {{
-            layer.style.backgroundImage = "none";
+            setLayerObjectUrl(layer, "");
           }}
         }});
         backgroundActiveLayer = nextLayer;
+        evictObjectUrlCache();
       }}
       return true;
     }}
@@ -966,6 +1107,8 @@ def _build_bootstrap_script(
       removeBackgroundContainer();
       revokeObjectUrls();
       lastConfig = null;
+      stopRotation();
+      void releaseLeadership();
       restoreThemeColors();
       stopTokenStatsEnhancement();
     }}
@@ -1531,14 +1674,15 @@ def _build_bootstrap_script(
 
     async function fetchBackground(url, token) {{
       if (!url) {{
-        lastBackgroundUrl = "";
-        lastBackgroundObjectUrl = "";
         return "";
       }}
-      if (backgroundObjectUrlCache[url]) {{
-        lastBackgroundUrl = url;
-        lastBackgroundObjectUrl = backgroundObjectUrlCache[url];
-        return lastBackgroundObjectUrl;
+      // 记录缓存代数：禁用或卸载触发整体回收后，迟到的下载必须丢弃。
+      var requestGeneration = backgroundCacheGeneration;
+      var cachedObjectUrl = getCachedObjectUrl(url);
+      if (cachedObjectUrl) {{
+        // 命中同样持有一份在途标记返回，所有权与新建路径一致。
+        markObjectUrlInFlight(cachedObjectUrl);
+        return cachedObjectUrl;
       }}
       var response = await fetch(withCacheBust(url), {{
         cache: "no-store",
@@ -1549,10 +1693,24 @@ def _build_bootstrap_script(
         throw new Error("HTTP " + response.status);
       }}
       var blob = await response.blob();
+      // 并发请求同一 URL 时，后完成的一方在此复查缓存：已有胜出者直接
+      // 复用（同样持有在途标记），避免创建无人回收的孤儿 object URL。
+      var winnerObjectUrl = getCachedObjectUrl(url);
+      if (winnerObjectUrl) {{
+        markObjectUrlInFlight(winnerObjectUrl);
+        return winnerObjectUrl;
+      }}
+      if (requestGeneration !== backgroundCacheGeneration) {{
+        // 下载期间缓存已被整体回收（禁用/卸载）：裸 Blob 直接丢弃，
+        // 不创建对象 URL。调用方的失效检查会吞掉这个错误。
+        throw new Error("背景缓存已更新，本次下载作废。");
+      }}
       var objectUrl = URL.createObjectURL(blob);
-      backgroundObjectUrlCache[url] = objectUrl;
-      lastBackgroundUrl = url;
-      lastBackgroundObjectUrl = objectUrl;
+      backgroundObjectUrlCache.set(url, objectUrl);
+      // 成功返回时持有在途标记并随 URL 移交调用方：淘汰、解码与落层
+      // 全程受保护，不存在未保护窗口；调用方在 finally 中统一解除。
+      markObjectUrlInFlight(objectUrl);
+      evictObjectUrlCache();
       return objectUrl;
     }}
 
@@ -1565,11 +1723,13 @@ def _build_bootstrap_script(
         currentBackgroundUrl = "";
         currentObjectUrl = "";
         await applyBackgroundLayer("", false);
+        lastAppliedOrientation = orientation;
         applyConfig(config, "");
         return "";
       }}
       if (backgroundUrl === currentBackgroundUrl && currentObjectUrl) {{
         await applyBackgroundLayer(currentObjectUrl, false);
+        lastAppliedOrientation = orientation;
         applyConfig(config, currentObjectUrl);
         return currentObjectUrl;
       }}
@@ -1582,26 +1742,34 @@ def _build_bootstrap_script(
         }}
         throw error;
       }}
-      await decodeBackgroundImage(imageUrl);
-      if (
-        requestSeq !== backgroundRequestSeq ||
-        pickBackgroundUrl(config, getViewportOrientation()) !== backgroundUrl
-      ) {{
-        return currentObjectUrl || "";
+      // fetchBackground 成功返回时已持有在途标记；失败路径未标记，
+      // 不会进入这里。finally 统一解除，任何出口都不残留计数。
+      try {{
+        await decodeBackgroundImage(imageUrl);
+        if (
+          requestSeq !== backgroundRequestSeq ||
+          pickBackgroundUrl(config, getViewportOrientation()) !== backgroundUrl
+        ) {{
+          return currentObjectUrl || "";
+        }}
+        var applied = await applyBackgroundLayer(imageUrl, Boolean(animate), function () {{
+          return (
+            requestSeq === backgroundRequestSeq &&
+            pickBackgroundUrl(config, getViewportOrientation()) === backgroundUrl
+          );
+        }});
+        if (!applied) {{
+          return currentObjectUrl || "";
+        }}
+        currentBackgroundUrl = backgroundUrl;
+        currentObjectUrl = imageUrl;
+        lastAppliedOrientation = orientation;
+        applyConfig(config, imageUrl);
+        return imageUrl;
+      }} finally {{
+        unmarkObjectUrlInFlight(imageUrl);
+        evictObjectUrlCache();
       }}
-      var applied = await applyBackgroundLayer(imageUrl, Boolean(animate), function () {{
-        return (
-          requestSeq === backgroundRequestSeq &&
-          pickBackgroundUrl(config, getViewportOrientation()) === backgroundUrl
-        );
-      }});
-      if (!applied) {{
-        return currentObjectUrl || "";
-      }}
-      currentBackgroundUrl = backgroundUrl;
-      currentObjectUrl = imageUrl;
-      applyConfig(config, imageUrl);
-      return imageUrl;
     }}
 
     async function resolveConfigForRefresh(token, allowInitialRandom) {{
@@ -1638,6 +1806,7 @@ def _build_bootstrap_script(
             orientation: orientation,
           }});
           if (randomResponse && randomResponse.config) {{
+            initialRandomJustApplied = true;
             return randomResponse.config;
           }}
         }} catch (error) {{
@@ -1652,41 +1821,109 @@ def _build_bootstrap_script(
       return config;
     }}
 
+    async function applyResolvedConfig(config, token, options) {{
+      // 普通刷新与定时轮换共用的“应用已解析配置”流程：CSS、状态、背景与主题色。
+      if (!config.enabled) {{
+        setInactive();
+        removeStyleElement();
+        return;
+      }}
+
+      var css = await fetchText(THEME_URL, token);
+      ensureStyleElement(css);
+      lastConfig = config;
+      try {{
+        await applyDirectionalBackground(
+          config,
+          token,
+          Boolean(options && options.animateBackground)
+        );
+      }} catch (error) {{
+        if (!currentObjectUrl) {{
+          setInactive();
+          removeStyleElement();
+        }}
+        throw error;
+      }}
+    }}
+
+    function mergeRefreshOptions(base, extra) {{
+      // 忙碌期间到达的多次刷新合并为一次，动画/初始随机选项取或，
+      // 避免跨标签轮换同步消息在忙碌窗口退化为硬切。
+      var merged = base ? Object.assign({{}}, base) : {{}};
+      if (extra) {{
+        if (extra.animateBackground) {{
+          merged.animateBackground = true;
+        }}
+        if (extra.allowInitialRandom) {{
+          merged.allowInitialRandom = true;
+        }}
+      }}
+      return merged;
+    }}
+
+    function releaseLoadingAndReplay() {{
+      // loading 的唯一出口：普通刷新与定时轮换共用同一把互斥锁，
+      // 锁释放后统一重放合并后的待处理刷新。
+      loading = false;
+      if (pendingRefreshOptions) {{
+        var replay = pendingRefreshOptions;
+        pendingRefreshOptions = null;
+        window.setTimeout(function () {{
+          refreshPalette(replay);
+        }}, 80);
+      }}
+    }}
+
+    function rotationScheduleNeedsSync(previous, next) {{
+      // 只有开关、间隔或当前背景真实变化才重排轮换计时；普通刷新不得把
+      // 即将到期的轮换闹钟重新上满，手动换图则必须重新等待完整间隔。
+      if (!previous || !next) {{
+        return true;
+      }}
+      return (
+        Boolean(previous.enabled) !== Boolean(next.enabled) ||
+        Boolean(previous.background_rotation_enabled) !==
+          Boolean(next.background_rotation_enabled) ||
+        clampNumber(previous.background_rotation_interval_minutes, 1, 1440, 30) !==
+          clampNumber(next.background_rotation_interval_minutes, 1, 1440, 30) ||
+        String(previous.background_image || "") !==
+          String(next.background_image || "") ||
+        String(previous.landscape_background_image || "") !==
+          String(next.landscape_background_image || "") ||
+        String(previous.portrait_background_image || "") !==
+          String(next.portrait_background_image || "")
+      );
+    }}
+
     async function refreshPalette(options) {{
       if (loading) {{
-        pendingRefresh = true;
+        pendingRefreshOptions = mergeRefreshOptions(pendingRefreshOptions, options);
         return;
       }}
       loading = true;
+      // 重排判定只依赖配置 GET 成功，与后续视觉应用成败解耦。
+      var scheduleSyncNeeded = false;
       try {{
         var token = getToken();
         lastToken = token;
+        var previousConfig = lastConfig;
         var config = await resolveConfigForRefresh(
           token,
           Boolean(options && options.allowInitialRandom) || initialRandomPending
         );
 
-        if (!config.enabled) {{
-          setInactive();
-          removeStyleElement();
-          return;
-        }}
-
-        var css = await fetchText(THEME_URL, token);
-        ensureStyleElement(css);
+        // 调度以最新配置为准：GET 成功即更新 lastConfig，主题 CSS 或
+        // 图片应用失败也不让轮换协调（含领导权获权回调）回退到旧配置。
         lastConfig = config;
-        try {{
-          await applyDirectionalBackground(
-            config,
-            token,
-            Boolean(options && options.animateBackground)
-          );
-        }} catch (error) {{
-          if (!currentObjectUrl) {{
-            setInactive();
-            removeStyleElement();
-          }}
-          throw error;
+        scheduleSyncNeeded = rotationScheduleNeedsSync(previousConfig, config);
+
+        await applyResolvedConfig(config, token, {{
+          animateBackground: Boolean(options && options.animateBackground),
+        }});
+        if (initialRandomJustApplied) {{
+          initialRandomJustApplied = false;
+          broadcastSync("config-refresh");
         }}
       }} catch (error) {{
         if (!currentObjectUrl) {{
@@ -1697,13 +1934,443 @@ def _build_bootstrap_script(
           console.warn("[AstrBot调色盘] 背景刷新失败：", error);
         }}
       }} finally {{
-        loading = false;
-        if (pendingRefresh) {{
-          pendingRefresh = false;
-          window.setTimeout(function () {{
-            refreshPalette();
-          }}, 80);
+        // 图片下载或落层失败也要按新配置重排轮换计时，不能漏掉
+        // 手动换图后的完整间隔；配置 GET 失败时标志为 false，不误重排。
+        if (scheduleSyncNeeded) {{
+          syncRotationSchedule();
         }}
+        releaseLoadingAndReplay();
+      }}
+    }}
+
+    function stopRotationTimer() {{
+      window.clearTimeout(rotationTimer);
+      rotationTimer = 0;
+    }}
+
+    function stopRotation() {{
+      stopRotationTimer();
+      window.clearTimeout(rotationLeaseRetryTimer);
+      rotationLeaseRetryTimer = 0;
+    }}
+
+    function waitForRotationIdle() {{
+      if (!rotationInFlight) {{
+        return Promise.resolve();
+      }}
+      return new Promise(function (resolve) {{
+        var check = function () {{
+          if (!rotationInFlight) {{
+            resolve();
+            return;
+          }}
+          window.setTimeout(check, 100);
+        }};
+        check();
+      }});
+    }}
+
+    function releaseLeadership() {{
+      window.clearTimeout(rotationLeaseRetryTimer);
+      rotationLeaseRetryTimer = 0;
+      window.clearInterval(rotationLeaseRenewTimer);
+      rotationLeaseRenewTimer = 0;
+      var leadership = rotationLeadership;
+      rotationLeadership = null;
+      if (!leadership) {{
+        return Promise.resolve();
+      }}
+      // 轮换请求在途时先等其结束再释放，避免新领导页与旧请求重叠。
+      return waitForRotationIdle().then(function () {{
+        if (leadership.mode === "locks") {{
+          try {{
+            if (leadership.release) {{
+              leadership.release();
+            }} else if (leadership.abort) {{
+              leadership.abort.abort();
+            }}
+          }} catch (_) {{
+          }}
+          return;
+        }}
+        clearLeaseIfOwner(leadership.nonce);
+      }});
+    }}
+
+    function canUseLocalStorage() {{
+      try {{
+        var probeKey = SYNC_EVENT_KEY + ":probe";
+        window.localStorage.setItem(probeKey, "1");
+        window.localStorage.removeItem(probeKey);
+        return true;
+      }} catch (_) {{
+        return false;
+      }}
+    }}
+
+    function warnRotationUnavailable() {{
+      if (rotationUnavailableWarned) {{
+        return;
+      }}
+      rotationUnavailableWarned = true;
+      console.warn("[AstrBot调色盘] 当前浏览器不支持跨标签页协调，已在本页停用定时轮换。");
+    }}
+
+    function readRotationLease() {{
+      try {{
+        var raw = window.localStorage.getItem(ROTATION_LEASE_KEY);
+        if (!raw) {{
+          return null;
+        }}
+        var lease = JSON.parse(raw);
+        if (!lease || typeof lease.owner !== "string" || typeof lease.nonce !== "string") {{
+          return null;
+        }}
+        if (!Number.isFinite(lease.expiresAt)) {{
+          return null;
+        }}
+        return lease;
+      }} catch (_) {{
+        return null;
+      }}
+    }}
+
+    function writeRotationLease(lease) {{
+      try {{
+        window.localStorage.setItem(ROTATION_LEASE_KEY, JSON.stringify(lease));
+        return true;
+      }} catch (_) {{
+        return false;
+      }}
+    }}
+
+    function clearLeaseIfOwner(nonce) {{
+      var lease = readRotationLease();
+      if (lease && lease.owner === rotationOwnerId && lease.nonce === nonce) {{
+        try {{
+          window.localStorage.removeItem(ROTATION_LEASE_KEY);
+        }} catch (_) {{
+        }}
+      }}
+    }}
+
+    function scheduleLeaseRetry() {{
+      // 带随机抖动的退避重试；经由 syncRotationSchedule 重新检查条件。
+      window.clearTimeout(rotationLeaseRetryTimer);
+      rotationLeaseRetryTimer = window.setTimeout(function () {{
+        syncRotationSchedule();
+      }}, 2000 + Math.random() * 1000);
+    }}
+
+    function renewRotationLease(nonce) {{
+      var lease = readRotationLease();
+      if (!lease || lease.owner !== rotationOwnerId || lease.nonce !== nonce) {{
+        // 租约被覆盖或清除：放弃领导权并重新协调。
+        if (rotationLeadership && rotationLeadership.mode === "lease") {{
+          stopRotation();
+          void releaseLeadership();
+          syncRotationSchedule();
+        }}
+        return;
+      }}
+      var renewed = writeRotationLease({{
+        owner: rotationOwnerId,
+        nonce: nonce,
+        expiresAt: Date.now() + ROTATION_LEASE_TTL_MS,
+      }});
+      if (!renewed) {{
+        // 续期写失败（如存储配额或隐私模式变化）：租约必将过期，
+        // 主动放弃领导权并退避重试，避免与其他标签页形成双领导。
+        if (rotationLeadership && rotationLeadership.mode === "lease") {{
+          stopRotation();
+          void releaseLeadership();
+          scheduleLeaseRetry();
+        }}
+      }}
+    }}
+
+    function acquireLeaseLeadership() {{
+      if (!canUseLocalStorage()) {{
+        warnRotationUnavailable();
+        return;
+      }}
+      var retry = scheduleLeaseRetry;
+      var now = Date.now();
+      var lease = readRotationLease();
+      if (lease && lease.expiresAt > now && lease.owner !== rotationOwnerId) {{
+        retry();
+        return;
+      }}
+      var nonce = rotationOwnerId + ":" + now + ":" + Math.random().toString(36).slice(2);
+      var written = writeRotationLease({{
+        owner: rotationOwnerId,
+        nonce: nonce,
+        expiresAt: now + ROTATION_LEASE_TTL_MS,
+      }});
+      if (!written) {{
+        warnRotationUnavailable();
+        return;
+      }}
+      // 写后重读确认；竞态失败方加随机抖动退避重试。
+      var confirmed = readRotationLease();
+      if (!confirmed || confirmed.owner !== rotationOwnerId || confirmed.nonce !== nonce) {{
+        retry();
+        return;
+      }}
+      rotationLeadership = {{ mode: "lease", nonce: nonce }};
+      window.clearInterval(rotationLeaseRenewTimer);
+      rotationLeaseRenewTimer = window.setInterval(function () {{
+        renewRotationLease(nonce);
+      }}, ROTATION_LEASE_RENEW_MS);
+      scheduleRotation();
+    }}
+
+    function acquireLockLeadership() {{
+      var abort = new AbortController();
+      var leadership = {{ mode: "locks", abort: abort, release: null, acquired: false }};
+      rotationLeadership = leadership;
+      var releaseLock;
+      // 锁回调通过持续占有的 Promise 保持领导权，直到 release 被调用。
+      var holdPromise = new Promise(function (resolve) {{
+        releaseLock = resolve;
+      }});
+      try {{
+        navigator.locks
+          .request(ROTATION_LOCK_NAME, {{ signal: abort.signal }}, function () {{
+            if (rotationLeadership === leadership) {{
+              leadership.release = releaseLock;
+              // 真正获锁后才允许启动轮换计时。
+              leadership.acquired = true;
+              scheduleRotation();
+            }} else {{
+              releaseLock();
+            }}
+            return holdPromise;
+          }})
+          .catch(function (error) {{
+            if (error && error.name === "AbortError") {{
+              return;
+            }}
+            console.warn("[AstrBot调色盘] 定时轮换领导锁异常：", error);
+            // 异步获锁失败不得永久卡死：校验仍是当前申请后清空状态，
+            // 转入 localStorage 租约继续协调轮换。
+            if (rotationLeadership === leadership) {{
+              rotationLeadership = null;
+              acquireLeaseLeadership();
+            }}
+          }});
+      }} catch (_) {{
+        // 当前环境不支持带 signal 的 Web Locks，退回 localStorage 租约。
+        if (rotationLeadership === leadership) {{
+          rotationLeadership = null;
+        }}
+        acquireLeaseLeadership();
+      }}
+    }}
+
+    function hasAcquiredLeadership() {{
+      return Boolean(rotationLeadership) && rotationLeadership.acquired !== false;
+    }}
+
+    function ensureLeadership() {{
+      if (rotationLeadership) {{
+        return;
+      }}
+      if (navigator.locks && typeof navigator.locks.request === "function") {{
+        acquireLockLeadership();
+        return;
+      }}
+      acquireLeaseLeadership();
+    }}
+
+    function scheduleRotation() {{
+      // 递归 setTimeout：任何 outcome 后都重新等待一个完整间隔。
+      window.clearTimeout(rotationTimer);
+      rotationTimer = 0;
+      if (!hasAcquiredLeadership()) {{
+        return;
+      }}
+      if (!lastConfig || !lastConfig.enabled || !lastConfig.background_rotation_enabled) {{
+        return;
+      }}
+      var intervalMinutes = clampNumber(
+        lastConfig.background_rotation_interval_minutes,
+        1,
+        1440,
+        30
+      );
+      rotationTimer = window.setTimeout(function () {{
+        void runRotationTick();
+      }}, intervalMinutes * 60000);
+    }}
+
+    function syncRotationSchedule() {{
+      stopRotationTimer();
+      if (
+        document.visibilityState !== "visible" ||
+        !lastConfig ||
+        !lastConfig.enabled ||
+        !lastConfig.background_rotation_enabled
+      ) {{
+        window.clearTimeout(rotationLeaseRetryTimer);
+        rotationLeaseRetryTimer = 0;
+        void releaseLeadership();
+        return;
+      }}
+      if (rotationLeadership) {{
+        scheduleRotation();
+        return;
+      }}
+      ensureLeadership();
+    }}
+
+    function rotationPoolConfig(config, orientation) {{
+      // 镜像后端 _random_background_pool 的选池顺序与当前图判断。
+      var pools = orientation === "portrait"
+        ? ["portrait", "legacy", "landscape"]
+        : ["landscape", "legacy", "portrait"];
+      for (var index = 0; index < pools.length; index += 1) {{
+        var pool = pools[index];
+        var images = pool === "portrait"
+          ? config.portrait_background_images
+          : pool === "landscape"
+            ? config.landscape_background_images
+            : config.background_images;
+        if (Array.isArray(images) && images.length > 0) {{
+          var current = pool === "portrait"
+            ? config.portrait_background_image
+            : pool === "landscape"
+              ? config.landscape_background_image
+              : config.background_image;
+          return {{ pool: pool, images: images, current: current || "" }};
+        }}
+      }}
+      return null;
+    }}
+
+    function hasRotationCandidate(config, orientation) {{
+      var pool = rotationPoolConfig(config, orientation);
+      if (!pool) {{
+        return false;
+      }}
+      // 与后端一致：只有当前一张图时静默跳过。
+      if (pool.images.length === 1 && pool.current === pool.images[0]) {{
+        return false;
+      }}
+      return true;
+    }}
+
+    async function runRotationTick() {{
+      if (!hasAcquiredLeadership() || document.visibilityState !== "visible") {{
+        return;
+      }}
+      if (loading || rotationInFlight) {{
+        // 忙碌时不立即补执行，重新等待完整间隔。
+        scheduleRotation();
+        return;
+      }}
+      // 轮换与普通刷新共用同一把 loading 互斥锁：轮换 POST 在途时，
+      // hash/storage/message/token 刷新转入待处理重放，不会并发拉取
+      // 并用旧配置回退 lastConfig 与视觉背景。
+      loading = true;
+      rotationInFlight = true;
+      try {{
+        var token = getToken();
+        lastToken = token;
+        var config = await fetchJson(CONFIG_URL, token);
+        if (!config.enabled || !config.background_rotation_enabled) {{
+          lastConfig = config;
+          syncRotationSchedule();
+          return;
+        }}
+        lastConfig = config;
+        var orientation = getViewportOrientation();
+        if (!hasRotationCandidate(config, orientation)) {{
+          return;
+        }}
+        var previousUrl = pickBackgroundUrl(config, orientation);
+        var response = await postJson(RANDOM_SELECT_URL, token, {{
+          orientation: orientation,
+          scheduled: true,
+        }});
+        if (
+          response &&
+          response.config &&
+          response.config.enabled &&
+          pickBackgroundUrl(response.config, orientation) !== previousUrl
+        ) {{
+          await applyResolvedConfig(response.config, token, {{ animateBackground: true }});
+          broadcastSync("rotation-complete");
+        }}
+      }} catch (error) {{
+        // 失败后保留当前壁纸，等待下一个完整间隔重试。
+        if (!isExpectedAuthFailure(error)) {{
+          console.warn("[AstrBot调色盘] 定时轮换背景失败：", error);
+        }}
+      }} finally {{
+        rotationInFlight = false;
+        scheduleRotation();
+        releaseLoadingAndReplay();
+      }}
+    }}
+
+    function rememberSyncMessageId(id) {{
+      if (seenSyncMessageIdCount > 100) {{
+        seenSyncMessageIds = {{}};
+        seenSyncMessageIdCount = 0;
+      }}
+      if (!seenSyncMessageIds[id]) {{
+        seenSyncMessageIds[id] = true;
+        seenSyncMessageIdCount += 1;
+      }}
+    }}
+
+    function broadcastSync(kind) {{
+      var message = {{
+        id: rotationOwnerId + ":" + Date.now() + ":" + Math.random().toString(36).slice(2),
+        kind: kind,
+      }};
+      rememberSyncMessageId(message.id);
+      try {{
+        if (paletteSyncChannel) {{
+          paletteSyncChannel.postMessage(message);
+        }}
+      }} catch (_) {{
+      }}
+      // storage 脉冲覆盖 BroadcastChannel 不可用的环境。
+      try {{
+        window.localStorage.setItem(SYNC_EVENT_KEY, JSON.stringify(message));
+      }} catch (_) {{
+      }}
+    }}
+
+    function handleSyncMessage(message) {{
+      if (!message || !message.id || !message.kind) {{
+        return;
+      }}
+      // 按消息 id 去重，接收端不得再次广播。
+      if (seenSyncMessageIds[message.id]) {{
+        return;
+      }}
+      rememberSyncMessageId(message.id);
+      // 隐藏页面不立即刷新：恢复可见时 visibilitychange 会触发完整刷新。
+      if (document.visibilityState !== "visible") {{
+        return;
+      }}
+      // 不信任消息携带的状态，统一重新拉取最终配置。
+      refreshPalette({{ animateBackground: true }});
+    }}
+
+    function setupPaletteSync() {{
+      try {{
+        if (typeof BroadcastChannel === "function") {{
+          paletteSyncChannel = new BroadcastChannel(SYNC_CHANNEL_NAME);
+          paletteSyncChannel.onmessage = function (event) {{
+            handleSyncMessage(event && event.data);
+          }};
+        }}
+      }} catch (_) {{
+        paletteSyncChannel = null;
       }}
     }}
 
@@ -1712,18 +2379,33 @@ def _build_bootstrap_script(
         return;
       }}
       if (event && event.data && event.data.type === "astrbot-palette:refresh") {{
-        refreshPalette();
+        // 设置页保存后由本页先刷新，再广播给其他同源标签页。
+        refreshPalette().then(function () {{
+          broadcastSync("config-refresh");
+        }});
       }}
     }});
     window.addEventListener("storage", function (event) {{
       if (!event || event.key === "token") {{
         refreshPalette();
+        return;
+      }}
+      if (event.key === SYNC_EVENT_KEY && event.newValue) {{
+        try {{
+          handleSyncMessage(JSON.parse(event.newValue));
+        }} catch (_) {{
+        }}
       }}
     }});
     window.addEventListener("visibilitychange", function () {{
       if (document.visibilityState === "visible") {{
         refreshPalette();
+        syncRotationSchedule();
+        return;
       }}
+      // 页面隐藏时暂停轮播，不补播错过次数。
+      stopRotation();
+      void releaseLeadership();
     }});
     window.addEventListener("hashchange", refreshPalette);
     function scheduleDirectionalBackgroundRefresh() {{
@@ -1732,7 +2414,13 @@ def _build_bootstrap_script(
       }}
       window.clearTimeout(backgroundResizeTimer);
       backgroundResizeTimer = window.setTimeout(function () {{
-        applyDirectionalBackground(lastConfig, lastToken || getToken(), true).catch(function (error) {{
+        var previousOrientation = lastAppliedOrientation;
+        applyDirectionalBackground(lastConfig, lastToken || getToken(), true).then(function () {{
+          if (lastAppliedOrientation !== previousOrientation) {{
+            // 实际横竖屏方向改变后重新等待完整轮换间隔。
+            scheduleRotation();
+          }}
+        }}).catch(function (error) {{
           if (!isExpectedAuthFailure(error)) {{
             console.warn("[AstrBot调色盘] 方向背景切换失败：", error);
           }}
@@ -1751,7 +2439,14 @@ def _build_bootstrap_script(
       }}
     }} catch (_) {{
     }}
-    window.addEventListener("beforeunload", revokeObjectUrls);
+    window.addEventListener("pagehide", function () {{
+      stopRotation();
+      void releaseLeadership();
+    }});
+    window.addEventListener("beforeunload", function () {{
+      stopRotation();
+      revokeObjectUrls();
+    }});
 
     window.setInterval(function () {{
       dropRestoredThemeStyleIfUserChangedColors();
@@ -1761,6 +2456,7 @@ def _build_bootstrap_script(
       }}
     }}, 1500);
 
+    setupPaletteSync();
     bootstrapRecommendedDarkTheme();
     refreshPalette({{ allowInitialRandom: true }});
   }})();"""

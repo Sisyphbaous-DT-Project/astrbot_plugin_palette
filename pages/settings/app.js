@@ -12,6 +12,8 @@ const enabledInput = document.getElementById("enabled");
 const autoThemeInput = document.getElementById("auto-theme-enabled");
 const detailedTokenStatsInput = document.getElementById("detailed-token-stats-enabled");
 const randomBackgroundInput = document.getElementById("random-background-on-load");
+const rotationEnabledInput = document.getElementById("background-rotation-enabled");
+const rotationIntervalInput = document.getElementById("background-rotation-interval");
 const orientationInputs = {
   landscape: document.getElementById("landscape-background-file"),
   portrait: document.getElementById("portrait-background-file"),
@@ -551,6 +553,8 @@ function configFromForm() {
     background_contrast: numberFromInput(contrastInput, 1),
     background_saturation: numberFromInput(saturationInput, 1),
     random_background_on_load: randomBackgroundInput.checked,
+    background_rotation_enabled: rotationEnabledInput.checked,
+    background_rotation_interval_minutes: rotationIntervalFromInput(),
     auto_theme_enabled: autoThemeInput.checked,
     detailed_token_stats_enabled: detailedTokenStatsInput.checked,
     theme_primary: currentConfig?.theme_primary || "",
@@ -619,6 +623,9 @@ function applyForm(config) {
   contrastInput.value = String(config.background_contrast ?? 1);
   saturationInput.value = String(config.background_saturation ?? 1);
   randomBackgroundInput.checked = Boolean(config.random_background_on_load);
+  rotationEnabledInput.checked = Boolean(config.background_rotation_enabled);
+  rotationIntervalInput.value = String(config.background_rotation_interval_minutes ?? 30);
+  syncRotationInputs();
   autoThemeInput.checked = config.auto_theme_enabled !== false;
   detailedTokenStatsInput.checked = Boolean(config.detailed_token_stats_enabled);
   advancedCssInput.value = config.advanced_css || "";
@@ -766,6 +773,19 @@ function numberFromInput(input, fallback) {
   return Number.isFinite(value) ? value : fallback;
 }
 
+function rotationIntervalFromInput() {
+  const value = Number.parseInt(rotationIntervalInput.value, 10);
+  if (!Number.isFinite(value)) {
+    return 30;
+  }
+  return Math.min(Math.max(value, 1), 1440);
+}
+
+function syncRotationInputs() {
+  // 关闭轮换时禁用分钟输入，但保留已填写值。
+  rotationIntervalInput.disabled = !rotationEnabledInput.checked;
+}
+
 function renderStatus(status, config) {
   latestStatus = status;
   const injection = status.injection || {};
@@ -788,6 +808,9 @@ function renderStatus(status, config) {
     ["竖屏图库", `${config.portrait_background_images?.length || 0} 张`],
     ["预览方向", previewOrientation === "portrait" ? "竖屏" : "横屏"],
     ["随机", config.random_background_on_load ? "打开或刷新时随机" : "关闭"],
+    ["定时轮换", config.background_rotation_enabled
+      ? `每 ${config.background_rotation_interval_minutes ?? 30} 分钟随机切换`
+      : "关闭"],
     ["主题色", config.auto_theme_enabled ? "自动同步" : "未同步"],
     ["统计增强", config.detailed_token_stats_enabled ? "已启用" : "关闭"],
     ["主色", config.theme_primary || "未生成"],
@@ -1100,6 +1123,8 @@ saveButton.addEventListener("click", () => {
 recalculateThemeButton.addEventListener("click", () => {
   void recalculateThemeColors();
 });
+
+rotationEnabledInput.addEventListener("change", syncRotationInputs);
 
 Object.entries(orientationInputs).forEach(([orientation, input]) => {
   input?.addEventListener("change", () => {

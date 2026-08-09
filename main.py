@@ -329,8 +329,19 @@ class PalettePlugin(Star):
             payload.get("orientation"),
             default="legacy",
         )
+        # scheduled 为定时轮换标记：未传时保持手动随机与刷新随机的既有语义。
+        scheduled = self._normalize_bool(payload.get("scheduled"), False)
         try:
             config = self._normalize_config(self._public_config())
+            if scheduled and (
+                not config["enabled"] or not config["background_rotation_enabled"]
+            ):
+                return json_response(
+                    {
+                        "message": "定时轮换未开启，保持当前背景。",
+                        "config": self._public_config(),
+                    }
+                )
             pool, current_background, background_images = self._random_background_pool(
                 config,
                 orientation,
@@ -360,6 +371,14 @@ class PalettePlugin(Star):
             config = self._with_theme_colors(config, force=True, orientation=pool)
             self._save_config(config)
         except ValueError as exc:
+            # 定时轮换的异常（如图库为空）按静默失败处理：保留当前配置，等待下一间隔。
+            if scheduled:
+                return json_response(
+                    {
+                        "message": str(exc),
+                        "config": self._public_config(),
+                    }
+                )
             return error_response(str(exc))
 
         return json_response(
@@ -590,6 +609,16 @@ class PalettePlugin(Star):
                 "random_background_on_load",
                 False,
             ),
+            "background_rotation_enabled": self._config_bool(
+                "background_rotation_enabled",
+                False,
+            ),
+            # 公开配置统一规范化：AstrBot 原生配置渲染器不读取
+            # minimum/maximum，越界值可能经原生入口写入；运行时按
+            # 1~1440 夹取执行，展示层必须返回同一口径。
+            "background_rotation_interval_minutes": self._normalize_rotation_interval(
+                self.config.get("background_rotation_interval_minutes", 30)
+            ),
             "auto_theme_enabled": self._config_bool("auto_theme_enabled", True),
             "detailed_token_stats_enabled": self._config_bool(
                 "detailed_token_stats_enabled",
@@ -793,6 +822,19 @@ class PalettePlugin(Star):
                     current["random_background_on_load"],
                 ),
                 current["random_background_on_load"],
+            ),
+            "background_rotation_enabled": self._normalize_bool(
+                payload.get(
+                    "background_rotation_enabled",
+                    current["background_rotation_enabled"],
+                ),
+                current["background_rotation_enabled"],
+            ),
+            "background_rotation_interval_minutes": self._normalize_rotation_interval(
+                payload.get(
+                    "background_rotation_interval_minutes",
+                    current["background_rotation_interval_minutes"],
+                )
             ),
             "auto_theme_enabled": self._normalize_bool(
                 payload.get("auto_theme_enabled", current["auto_theme_enabled"]),
@@ -1215,6 +1257,18 @@ class PalettePlugin(Star):
         if isinstance(value, int) and value in {0, 1}:
             return bool(value)
         return default
+
+    @staticmethod
+    def _normalize_rotation_interval(value: Any) -> int:
+        """轮换间隔分钟数：无效值回退默认 30，有效值限制到 1~1440。"""
+
+        if isinstance(value, bool):
+            return 30
+        try:
+            number = int(value)
+        except (TypeError, ValueError):
+            return 30
+        return min(max(number, 1), 1440)
 
     @staticmethod
     def _clamp_int(value: Any, minimum: int, maximum: int) -> int:
