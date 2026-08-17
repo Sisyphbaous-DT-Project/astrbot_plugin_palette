@@ -1,10 +1,14 @@
 # AstrBot调色盘
 
+<p align="center">
+  <img src="logo.png" alt="AstrBot调色盘图标" width="256">
+</p>
+
 AstrBot调色盘是一个 AstrBot WebUI 美化插件。当前版本聚焦于背景图库、透明界面、Liquid Glass 设置页、文字可读性增强和壁纸主题色联动，让 Dashboard 可以在不修改 AstrBot 源码的前提下换上自定义壁纸。
 
 当前已测试兼容 AstrBot `4.27.2`。
 
-> 当前版本：`0.4.12`
+> 当前版本：`0.4.13`
 >
 > 兼容 AstrBot：`>=4.26.0-beta1`，已测试兼容 `4.27.2`
 
@@ -24,6 +28,8 @@ AstrBot调色盘是一个 AstrBot WebUI 美化插件。当前版本聚焦于背�
 - 可选在 AstrBot 系统统计页追加模型 Token 明细，查看每个模型的输入、输出、缓存命中和命中率。
 - 透明化 AstrBot 顶栏、选项卡、插件说明、安装窗口、更新日志、WebChat 等常见深色背景区域。
 - 首次注入后自动推荐切换到 AstrBot 深色主题，用户仍可在 AstrBot 设置中改回其他主题。
+
+插件根目录提供符合 AstrBot 插件规范的 `logo.png`（1:1、`256x256` PNG），安装后会自动显示在插件市场和插件列表中。
 
 ## 效果展示
 
@@ -54,7 +60,7 @@ git clone https://github.com/Sisyphbaous-DT-Project/astrbot_plugin_palette.git
 
 - 插件名：`astrbot_plugin_palette`
 - 展示名：`AstrBot调色盘`
-- 版本：`0.4.12`
+- 版本：`0.4.13`
 
 ## 使用
 
@@ -290,6 +296,8 @@ git diff --check
 `0.4.11` 修复 AstrBot `4.27.x` 下 Dashboard 路径识别问题，跟随 AstrBot 公开解析结果注入实际服务的 WebUI 入口，保留 `4.26.x` 旧接口兼容，并已确认兼容 AstrBot `4.27.1`。
 
 `0.4.12` 新增定时自动轮换壁纸，支持自定义分钟间隔、页面隐藏暂停、同源多标签页单领导协调和跨标签叠化同步，并为长时间轮换加入有界 object URL 缓存。
+
+`0.4.13` 按 AstrBot 插件规范新增 `logo.png` 图标，并同步更新插件市场与 README 展示信息。
 
 后续版本会继续补齐更多页面的透明化细节，并探索更完整的主题色板推导。
 
