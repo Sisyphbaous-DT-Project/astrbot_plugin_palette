@@ -343,9 +343,142 @@ class ReducedMotionTest(unittest.TestCase):
         self.assertIn("transform: none !important;", block)
 
 
+class MobileSidebarGlassTest(unittest.TestCase):
+    """窄屏 temporary 浮层侧栏的独立玻璃效果。"""
+
+    _SUFFIX = ".v-navigation-drawer.v-navigation-drawer--temporary"
+    _ACTIVE_SUFFIX = (
+        ".v-navigation-drawer.v-navigation-drawer--temporary"
+        ".v-navigation-drawer--active"
+    )
+
+    def _sidebar_bodies(self, css: str) -> list[str]:
+        # endswith 不会命中 --active 阴影规则，只取基础 temporary 规则。
+        bodies = _rules_bodies(css, self._SUFFIX)
+        self.assertTrue(bodies, "缺少 temporary 侧栏目标规则")
+        return bodies
+
+    def _active_bodies(self, css: str) -> list[str]:
+        return _rules_bodies(css, self._ACTIVE_SUFFIX)
+
+    def test_default_renders_glass(self) -> None:
+        bodies = self._sidebar_bodies(_css())
+        self.assertTrue(
+            any(
+                "blur(18px) saturate(1.08)" in body
+                and "-webkit-backdrop-filter: blur(18px) saturate(1.08) !important;" in body
+                and "calc(0.72 + var(--astrbot-palette-surface-opacity, 0) * 0.24)"
+                in body
+                for body in bodies
+            )
+        )
+
+    def test_shadow_only_on_active(self) -> None:
+        # 外层阴影只挂在打开态：关闭态 drawer 只是平移出视口，
+        # 常挂阴影会在屏幕左缘残留淡影；基础规则不负责阴影。
+        css = _css()
+        for body in self._sidebar_bodies(css):
+            self.assertNotIn("box-shadow", body)
+        active_bodies = self._active_bodies(css)
+        self.assertTrue(active_bodies, "缺少 active 态阴影规则")
+        self.assertTrue(
+            any(
+                "box-shadow: 0 16px 36px rgba(0, 0, 0, 0.26)" in body
+                and body.count("box-shadow") == 1
+                for body in active_bodies
+            )
+        )
+
+    def test_max_value_renders_and_over_limit_clamps(self) -> None:
+        for config in ({"mobile_sidebar_glass": 40}, {"mobile_sidebar_glass": 99}):
+            bodies = self._sidebar_bodies(_css(config))
+            self.assertTrue(any("blur(40px)" in body for body in bodies))
+            self.assertFalse(any("blur(99px)" in body for body in bodies))
+
+    def test_zero_outputs_transparent_and_none(self) -> None:
+        css = _css({"mobile_sidebar_glass": 0})
+        bodies = self._sidebar_bodies(css)
+        self.assertTrue(
+            any(
+                "background: transparent !important;" in body
+                and "background-color: transparent !important;" in body
+                and "backdrop-filter: none !important;" in body
+                and "-webkit-backdrop-filter: none !important;" in body
+                for body in bodies
+            )
+        )
+        self.assertFalse(any("blur(0px)" in body for body in bodies))
+        self.assertFalse(any("box-shadow" in body for body in bodies))
+        # 关闭时不输出 active 阴影规则，由旧全局规则的 box-shadow: none 兜底。
+        self.assertFalse(self._active_bodies(css))
+
+    def test_zero_stays_transparent_with_surface_opacity(self) -> None:
+        # 0 值必须显式盖掉旧侧栏规则，surface_opacity 调高也不能重新染色。
+        bodies = self._sidebar_bodies(
+            _css({"mobile_sidebar_glass": 0, "surface_opacity": 1.0})
+        )
+        self.assertTrue(
+            any("background: transparent !important;" in body for body in bodies)
+        )
+
+    def test_selector_does_not_require_active_class(self) -> None:
+        # 侧滑拖拽中间态没有 active class，玻璃底色选择器只绑定 temporary，
+        # 保证拖拽过程中仍覆盖实底和滤镜，不出现透明穿透。
+        css = _css()
+        self.assertIn(
+            "#app .v-navigation-drawer.v-navigation-drawer--temporary {",
+            css,
+        )
+        for body in self._sidebar_bodies(css):
+            self.assertIn("backdrop-filter", body)
+
+    def test_overrides_carry_important(self) -> None:
+        # 旧 .v-navigation-drawer 规则全是 !important，覆盖声明必须同级。
+        css = _css()
+        for body in self._sidebar_bodies(css) + self._active_bodies(css):
+            for line in body.split(";"):
+                line = line.strip()
+                if line:
+                    self.assertTrue(
+                        line.endswith("!important"),
+                        f"缺少 !important: {line}",
+                    )
+
+    def test_independent_from_stats_card_blur(self) -> None:
+        bodies = self._sidebar_bodies(_css({"stats_card_blur": 0}))
+        self.assertTrue(any("blur(18px)" in body for body in bodies))
+        bodies = self._sidebar_bodies(
+            _css({"stats_card_blur": 40, "mobile_sidebar_glass": 0})
+        )
+        self.assertTrue(
+            any(
+                "background: transparent !important;" in body
+                and "backdrop-filter: none !important;" in body
+                for body in bodies
+            )
+        )
+
+    def test_surface_opacity_formula_bounds(self) -> None:
+        # surface_opacity 合法范围 0~1，底色透明度因此落在 0.72~0.96。
+        bodies = self._sidebar_bodies(_css({"surface_opacity": 1.0}))
+        self.assertTrue(
+            any(
+                "calc(0.72 + var(--astrbot-palette-surface-opacity, 0) * 0.24)"
+                in body
+                for body in bodies
+            )
+        )
+
+
 class CssIntegrityTest(unittest.TestCase):
     def test_braces_are_balanced(self) -> None:
-        for config in ({}, {"stats_card_blur": 0}, {"stats_card_blur": 40}):
+        for config in (
+            {},
+            {"stats_card_blur": 0},
+            {"stats_card_blur": 40},
+            {"mobile_sidebar_glass": 0},
+            {"mobile_sidebar_glass": 40},
+        ):
             css = _css(config)
             self.assertEqual(css.count("{"), css.count("}"))
 

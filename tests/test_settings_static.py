@@ -119,5 +119,80 @@ class RotationSchemaAndDocsTest(unittest.TestCase):
         self.assertIn("background_rotation_interval_minutes", _README)
 
 
+class SettingsMobileSidebarGlassMarkupTest(unittest.TestCase):
+    def test_sidebar_glass_input_bounds(self) -> None:
+        match = re.search(
+            r'<input[^>]*id="mobile-sidebar-glass"[^>]*>',
+            _INDEX_HTML,
+            re.S,
+        )
+        self.assertIsNotNone(match, "缺少移动端侧栏毛玻璃输入框")
+        tag = match.group(0)
+        self.assertIn('name="mobile_sidebar_glass"', tag)
+        self.assertIn('type="range"', tag)
+        self.assertIn('min="0"', tag)
+        self.assertIn('max="40"', tag)
+        self.assertIn('step="1"', tag)
+        self.assertIn('id="mobile-sidebar-glass-value"', _INDEX_HTML)
+        self.assertIn(">18px</output>", _INDEX_HTML)
+
+
+class SettingsMobileSidebarGlassLogicTest(unittest.TestCase):
+    def _function_body(self, name: str) -> str:
+        match = re.search(
+            rf"function {name}\([^)]*\) \{{(?P<body>.*?)\n\}}",
+            _APP_JS,
+            re.S,
+        )
+        self.assertIsNotNone(match, f"缺少函数 {name}")
+        return match.group("body")
+
+    def test_dom_references_present(self) -> None:
+        self.assertIn('getElementById("mobile-sidebar-glass")', _APP_JS)
+        self.assertIn('getElementById("mobile-sidebar-glass-value")', _APP_JS)
+
+    def test_config_from_form_reads_field(self) -> None:
+        self.assertIn("mobile_sidebar_glass", self._function_body("configFromForm"))
+
+    def test_apply_form_writes_field_with_default(self) -> None:
+        body = self._function_body("applyForm")
+        self.assertIn("mobile_sidebar_glass", body)
+        self.assertIn("?? 18", body)
+
+    def test_sync_range_labels_updates_output(self) -> None:
+        self.assertIn("mobileSidebarGlassValue", self._function_body("syncRangeLabels"))
+
+    def test_update_preview_drives_sidebar_variables(self) -> None:
+        body = self._function_body("updatePreview")
+        self.assertIn("--preview-sidebar-filter", body)
+        self.assertIn("--preview-sidebar-surface", body)
+        self.assertIn("is-sidebar-glass-disabled", body)
+
+    def test_style_consumes_sidebar_variables(self) -> None:
+        self.assertIn("var(--preview-sidebar-filter, blur(18px) saturate(1.08))", _STYLE_CSS)
+        self.assertIn("var(--preview-sidebar-surface, 0.72)", _STYLE_CSS)
+        self.assertIn(
+            ".effect-preview.is-sidebar-glass-disabled .sample-sidebar",
+            _STYLE_CSS,
+        )
+
+
+class MobileSidebarGlassSchemaAndDocsTest(unittest.TestCase):
+    def test_conf_schema_declares_field(self) -> None:
+        field = _SCHEMA.get("mobile_sidebar_glass")
+        self.assertIsNotNone(field)
+        self.assertEqual(field["type"], "int")
+        self.assertEqual(field["default"], 18)
+        self.assertEqual(field["minimum"], 0)
+        self.assertEqual(field["maximum"], 40)
+        self.assertEqual(field["slider"], {"min": 0, "max": 40, "step": 1})
+
+    def test_readme_documents_field(self) -> None:
+        self.assertIn("mobile_sidebar_glass", _README)
+        self.assertIn("`18`", _README)
+        self.assertIn("stats_card_blur", _README)
+        self.assertIn("独立", _README)
+
+
 if __name__ == "__main__":
     unittest.main()

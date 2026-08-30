@@ -87,6 +87,19 @@
     "default": 14,
     "hint": "范围为 0 到 40 px，控制主要信息框、组件管理页面和侧栏当前选中项的毛玻璃强度；0 表示关闭新增的模糊与玻璃装饰，让信息框和组件管理表面恢复透明，同时保留侧栏原有选中底色。"
   },
+  "mobile_sidebar_glass": {
+    "description": "移动端侧栏毛玻璃强度",
+    "type": "int",
+    "default": 18,
+    "minimum": 0,
+    "maximum": 40,
+    "slider": {
+      "min": 0,
+      "max": 40,
+      "step": 1
+    },
+    "hint": "范围为 0 到 40 px，仅作用于窄屏浮层侧栏；0 表示关闭移动端侧栏的底色、模糊和阴影，且独立于界面毛玻璃设置。"
+  },
   "text_enhancement_mode": {
     "description": "文字增强模式",
     "type": "string",

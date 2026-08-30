@@ -357,5 +357,57 @@ class ScheduledRandomSelectTest(PalettePluginTestCase):
         self.assertEqual(response["status_code"], 400)
 
 
+class MobileSidebarGlassConfigTest(PalettePluginTestCase):
+    def test_legacy_config_uses_default(self) -> None:
+        plugin = self._make_plugin({})
+        public = plugin._public_config()
+        self.assertEqual(public["mobile_sidebar_glass"], 18)
+
+    def test_normalize_config_keeps_valid_values(self) -> None:
+        plugin = self._make_plugin({})
+        for value in (0, 18, 40):
+            normalized = plugin._normalize_config({"mobile_sidebar_glass": value})
+            self.assertEqual(normalized["mobile_sidebar_glass"], value)
+
+    def test_normalize_config_clamps_out_of_range(self) -> None:
+        plugin = self._make_plugin({})
+        normalized = plugin._normalize_config({"mobile_sidebar_glass": -3})
+        self.assertEqual(normalized["mobile_sidebar_glass"], 0)
+        normalized = plugin._normalize_config({"mobile_sidebar_glass": 99})
+        self.assertEqual(normalized["mobile_sidebar_glass"], 40)
+
+    def test_normalize_config_invalid_values_fall_back_to_default(self) -> None:
+        # 保存路径与公开配置同一口径：非法值回退默认 18，
+        # 不能落成 0 意外关掉移动侧栏玻璃。
+        plugin = self._make_plugin({})
+        for invalid_value in ("abc", None, True):
+            normalized = plugin._normalize_config(
+                {"mobile_sidebar_glass": invalid_value}
+            )
+            self.assertEqual(normalized["mobile_sidebar_glass"], 18)
+
+    def test_public_config_normalizes_native_out_of_range(self) -> None:
+        # 原生配置入口可绕过设置页写入越界或非法值，公开配置必须
+        # 与运行时 CSS 的夹取口径一致，非法值回退默认 18。
+        plugin = self._make_plugin({"mobile_sidebar_glass": -5})
+        self.assertEqual(plugin._public_config()["mobile_sidebar_glass"], 0)
+        plugin = self._make_plugin({"mobile_sidebar_glass": 999})
+        self.assertEqual(plugin._public_config()["mobile_sidebar_glass"], 40)
+        plugin = self._make_plugin({"mobile_sidebar_glass": "abc"})
+        self.assertEqual(plugin._public_config()["mobile_sidebar_glass"], 18)
+        plugin = self._make_plugin({"mobile_sidebar_glass": True})
+        self.assertEqual(plugin._public_config()["mobile_sidebar_glass"], 18)
+
+    def test_new_field_preserves_existing_fields(self) -> None:
+        plugin = self._make_plugin({"stats_card_blur": 7})
+        public = plugin._public_config()
+        self.assertEqual(public["stats_card_blur"], 7)
+        self.assertEqual(public["mobile_sidebar_glass"], 18)
+        normalized = plugin._normalize_config({"mobile_sidebar_glass": 0})
+        self.assertEqual(normalized["stats_card_blur"], 7)
+        self.assertEqual(normalized["mobile_sidebar_glass"], 0)
+        self.assertIn("background_images", normalized)
+
+
 if __name__ == "__main__":
     unittest.main()

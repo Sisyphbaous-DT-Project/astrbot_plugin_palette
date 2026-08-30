@@ -33,6 +33,7 @@ const blurInput = document.getElementById("background-blur");
 const dimInput = document.getElementById("background-dim");
 const surfaceInput = document.getElementById("surface-opacity");
 const statsCardBlurInput = document.getElementById("stats-card-blur");
+const mobileSidebarGlassInput = document.getElementById("mobile-sidebar-glass");
 const textModeInput = document.getElementById("text-enhancement-mode");
 const textStrengthInput = document.getElementById("text-enhancement-strength");
 const grayscaleInput = document.getElementById("background-grayscale");
@@ -43,6 +44,7 @@ const blurValue = document.getElementById("blur-value");
 const dimValue = document.getElementById("dim-value");
 const surfaceValue = document.getElementById("surface-value");
 const statsCardBlurValue = document.getElementById("stats-card-blur-value");
+const mobileSidebarGlassValue = document.getElementById("mobile-sidebar-glass-value");
 const textStrengthValue = document.getElementById("text-strength-value");
 const grayscaleValue = document.getElementById("grayscale-value");
 const brightnessValue = document.getElementById("brightness-value");
@@ -546,6 +548,7 @@ function configFromForm() {
     background_dim: Number.parseFloat(dimInput.value) || 0,
     surface_opacity: Number.parseFloat(surfaceInput.value) || 0,
     stats_card_blur: Number.parseInt(statsCardBlurInput.value, 10) || 0,
+    mobile_sidebar_glass: Number.parseInt(mobileSidebarGlassInput.value, 10) || 0,
     text_enhancement_mode: textModeInput.value,
     text_enhancement_strength: numberFromInput(textStrengthInput, 0),
     background_grayscale: numberFromInput(grayscaleInput, 0),
@@ -616,6 +619,7 @@ function applyForm(config) {
   dimInput.value = String(config.background_dim ?? 0.5);
   surfaceInput.value = String(config.surface_opacity ?? 0);
   statsCardBlurInput.value = String(config.stats_card_blur ?? 14);
+  mobileSidebarGlassInput.value = String(config.mobile_sidebar_glass ?? 18);
   textModeInput.value = config.text_enhancement_mode || "soft_shadow";
   textStrengthInput.value = String(config.text_enhancement_strength ?? 1);
   grayscaleInput.value = String(config.background_grayscale ?? 0);
@@ -651,6 +655,7 @@ function syncRangeLabels() {
   dimValue.textContent = `${Math.round(Number(dimInput.value) * 100)}%`;
   surfaceValue.textContent = `${Math.round(Number(surfaceInput.value) * 100)}%`;
   statsCardBlurValue.textContent = `${statsCardBlurInput.value}px`;
+  mobileSidebarGlassValue.textContent = `${mobileSidebarGlassInput.value}px`;
   textStrengthValue.textContent = `${Math.round(Number(textStrengthInput.value) * 100)}%`;
   grayscaleValue.textContent = `${Math.round(Number(grayscaleInput.value) * 100)}%`;
   brightnessValue.textContent = `${Math.round(Number(brightnessInput.value) * 100)}%`;
@@ -686,6 +691,18 @@ function updatePreview() {
       statsCardBlur > 0 ? `blur(${statsCardBlur}px) saturate(1.08)` : "none",
     );
     preview.classList.toggle("is-card-glass-disabled", statsCardBlur <= 0);
+    const mobileSidebarGlass = Number(config.mobile_sidebar_glass) || 0;
+    preview.style.setProperty(
+      "--preview-sidebar-filter",
+      mobileSidebarGlass > 0 ? `blur(${mobileSidebarGlass}px) saturate(1.08)` : "none",
+    );
+    preview.style.setProperty(
+      "--preview-sidebar-surface",
+      mobileSidebarGlass > 0
+        ? formatCssNumber(0.72 + config.surface_opacity * 0.24)
+        : "0",
+    );
+    preview.classList.toggle("is-sidebar-glass-disabled", mobileSidebarGlass <= 0);
     preview.style.setProperty(
       "--preview-text-shadow",
       buildPreviewTextShadow(config),

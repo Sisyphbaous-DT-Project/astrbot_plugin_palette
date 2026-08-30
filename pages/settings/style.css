@@ -1201,9 +1201,23 @@ input[type="range"]::-moz-range-thumb {
 
 .sample-sidebar {
   align-content: start;
+  backdrop-filter: var(--preview-sidebar-filter, blur(18px) saturate(1.08));
+  -webkit-backdrop-filter: var(--preview-sidebar-filter, blur(18px) saturate(1.08));
+  background:
+    linear-gradient(
+      180deg,
+      rgba(255, 255, 255, var(--preview-surface-fill-top)),
+      rgba(255, 255, 255, var(--preview-surface-fill-bottom))
+    ),
+    rgba(18, 18, 20, var(--preview-sidebar-surface, 0.72));
   display: grid;
   gap: 10px;
   padding: 14px;
+}
+
+.effect-preview.is-sidebar-glass-disabled .sample-sidebar {
+  background: transparent;
+  box-shadow: none;
 }
 
 .sample-sidebar span {

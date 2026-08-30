@@ -587,6 +587,11 @@ class PalettePlugin(Star):
             "background_dim": self._config_float("background_dim", 0.5),
             "surface_opacity": self._config_float("surface_opacity", 0.0),
             "stats_card_blur": self._config_int("stats_card_blur", 14),
+            # 公开配置统一规范化到 0~40：原生配置入口可能写入越界
+            # 值，运行时 CSS 按同一口径夹取，展示层不能原样透传。
+            "mobile_sidebar_glass": self._normalize_mobile_sidebar_glass(
+                self.config.get("mobile_sidebar_glass", 18)
+            ),
             "text_enhancement_mode": self._config_str(
                 "text_enhancement_mode",
                 "soft_shadow",
@@ -780,6 +785,9 @@ class PalettePlugin(Star):
                 payload.get("stats_card_blur", current["stats_card_blur"]),
                 0,
                 40,
+            ),
+            "mobile_sidebar_glass": self._normalize_mobile_sidebar_glass(
+                payload.get("mobile_sidebar_glass", current["mobile_sidebar_glass"]),
             ),
             "text_enhancement_mode": text_enhancement_mode,
             "text_enhancement_strength": self._clamp_float(
@@ -1269,6 +1277,18 @@ class PalettePlugin(Star):
         except (TypeError, ValueError):
             return 30
         return min(max(number, 1), 1440)
+
+    @staticmethod
+    def _normalize_mobile_sidebar_glass(value: Any) -> int:
+        """移动端侧栏毛玻璃强度：无效值回退默认 18，有效值限制到 0~40。"""
+
+        if isinstance(value, bool):
+            return 18
+        try:
+            number = int(value)
+        except (TypeError, ValueError):
+            return 18
+        return min(max(number, 0), 40)
 
     @staticmethod
     def _clamp_int(value: Any, minimum: int, maximum: int) -> int:

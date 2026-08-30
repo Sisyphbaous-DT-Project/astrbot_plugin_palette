@@ -1,14 +1,14 @@
 # AstrBot调色盘
 
 <p align="center">
-  <img src="logo.png" alt="AstrBot调色盘图标" width="256">
+  <img src="docs/images/logo-artwork.png" alt="AstrBot调色盘主视觉图" width="640">
 </p>
 
 AstrBot调色盘是一个 AstrBot WebUI 美化插件。当前版本聚焦于背景图库、透明界面、Liquid Glass 设置页、文字可读性增强和壁纸主题色联动，让 Dashboard 可以在不修改 AstrBot 源码的前提下换上自定义壁纸。
 
 当前已测试兼容 AstrBot `4.27.4`。
 
-> 当前版本：`0.4.14`
+> 当前版本：`0.4.15`
 >
 > 兼容 AstrBot：`>=4.26.0-beta1`，已测试兼容 `4.27.4`
 
@@ -21,6 +21,7 @@ AstrBot调色盘是一个 AstrBot WebUI 美化插件。当前版本聚焦于背�
 - 调整背景填充方式、位置、遮罩、模糊、灰度、亮度、对比度和饱和度。
 - 将 Dashboard 常驻面板透明化，支持完全透明的悬浮文字效果。
 - 主要信息框、组件管理页面和侧栏当前选中项支持统一调节毛玻璃强度；设为 `0` 时关闭新增玻璃装饰，信息框和组件管理表面恢复透明，侧栏仍保留原有选中底色。
+- 窄屏浮层侧栏支持独立的毛玻璃强度 `mobile_sidebar_glass`（默认 `18`，范围 `0`–`40` px），避免手机或窄窗口下透明侧栏与正文重叠；设为 `0` 时恢复透明，与界面毛玻璃 `stats_card_blur` 互不影响。
 - 提供文字和图标可读性增强，包括柔和阴影和强力描边。
 - 自动读取当前壁纸主题色，并同步 AstrBot 主色与辅色。
 - 提供 Apple-like Liquid Glass 风格的分标签插件设置页，可在插件详情页中直接配置。
@@ -60,7 +61,7 @@ git clone https://github.com/Sisyphbaous-DT-Project/astrbot_plugin_palette.git
 
 - 插件名：`astrbot_plugin_palette`
 - 展示名：`AstrBot调色盘`
-- 版本：`0.4.14`
+- 版本：`0.4.15`
 
 ## 使用
 
@@ -99,6 +100,7 @@ git clone https://github.com/Sisyphbaous-DT-Project/astrbot_plugin_palette.git
 | `background_dim` | 全局暗色遮罩强度 | `0.5` |
 | `surface_opacity` | 常驻面板底色强度，`0` 为透明 | `0.0` |
 | `stats_card_blur` | 主要信息框、组件管理页面和侧栏当前选中项的毛玻璃强度，范围 `0`–`40` px；`0` 表示关闭新增的模糊与玻璃装饰，让信息框和组件管理表面恢复透明，同时保留侧栏原有选中底色 | `14` |
+| `mobile_sidebar_glass` | 窄屏浮层侧栏的毛玻璃强度，范围 `0`–`40` px，作用于手机或窄窗口下的主侧栏和聊天页侧栏；`0` 表示关闭侧栏的底色、模糊和阴影并恢复透明，独立于 `stats_card_blur` | `18` |
 | `text_enhancement_mode` | 文字增强模式，可选 `off`、`soft_shadow`、`stroke` | `soft_shadow` |
 | `text_enhancement_strength` | 文字增强强度 | `1.0` |
 | `background_grayscale` | 背景灰度 | `0.0` |
@@ -304,6 +306,8 @@ git diff --check
 `0.4.13` 按 AstrBot 插件规范新增 `logo.png` 图标，并同步更新插件市场与 README 展示信息。
 
 `0.4.14` 完成 AstrBot `4.27.4` 兼容性验证，补充运行时验证结果、恢复默认后的壁纸文件清理说明和自定义 Dashboard 路径使用边界，并同步版本文案。
+
+`0.4.15` 修复窄屏下透明浮层侧栏与主内容文字重叠的问题，新增独立的移动端侧栏毛玻璃强度配置，主侧栏和聊天页侧栏一并适配，并更换插件图标与 README 主视觉图。
 
 后续版本会继续补齐更多页面的透明化细节，并探索更完整的主题色板推导。
 

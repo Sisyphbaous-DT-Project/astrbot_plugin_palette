@@ -20,6 +20,7 @@ def build_theme_css(config: dict[str, Any]) -> str:
     background_dim = _css_float(config.get("background_dim"), 0.5)
     surface_opacity = _css_float(config.get("surface_opacity"), 0.0)
     stats_card_blur = _css_int(config.get("stats_card_blur"), 14)
+    mobile_sidebar_glass = _css_int(config.get("mobile_sidebar_glass"), 18)
     text_enhancement_mode = _css_keyword(
         config.get("text_enhancement_mode"),
         {"off", "soft_shadow", "stroke"},
@@ -68,7 +69,7 @@ def build_theme_css(config: dict[str, Any]) -> str:
 
     return "\n".join(
         [
-            "/* AstrBot调色盘 0.4.14 运行时主题 CSS */",
+            "/* AstrBot调色盘 0.4.15 运行时主题 CSS */",
             ":root {",
             f"  --astrbot-palette-enabled: {enabled};",
             "  --astrbot-palette-background-image: none;",
@@ -165,6 +166,8 @@ def build_theme_css(config: dict[str, Any]) -> str:
             _floating_scrollbar_css(),
             "",
             _surface_css(stats_card_blur),
+            "",
+            _mobile_sidebar_glass_css(mobile_sidebar_glass),
             "",
             _top_header_css(),
             "",
@@ -515,6 +518,43 @@ def _surface_css(stats_card_blur: int) -> str:
             "}",
         ]
     )
+
+
+def _mobile_sidebar_glass_css(mobile_sidebar_glass: int) -> str:
+    # 窄屏 temporary 侧栏的独立玻璃效果，与界面毛玻璃 stats_card_blur 脱钩。
+    # 底色和滤镜只匹配 --temporary（窄屏浮层态），桌面 permanent 侧栏不受影响；
+    # 不绑定 --active：侧滑拖拽中间态没有 active class，关闭态被平移出视口不可见。
+    # 阴影单独挂在 --active 上：关闭态 drawer 只是 translateX(-100%) 出屏且没有
+    # visibility:hidden，常挂阴影会在屏幕左缘残留一条淡影（拖拽中间态无阴影可接受）。
+    # 关键声明必须带 !important，否则压不过 _surface_css 里的旧透明规则。
+    blur = max(0, min(40, mobile_sidebar_glass))
+    glass_enabled = blur > 0
+    # 侧栏浮层背后压的是正文文字，底色要比信息框的 0.42 起步值更实。
+    surface = (
+        "rgba(var(--v-theme-surface), "
+        "calc(0.72 + var(--astrbot-palette-surface-opacity, 0) * 0.24))"
+        if glass_enabled
+        else "transparent"
+    )
+    rules = [
+        "html.astrbot-palette-active #app .v-navigation-drawer.v-navigation-drawer--temporary {",
+        f"  background: {surface} !important;",
+        f"  background-color: {surface} !important;",
+        *_backdrop_filter_lines(blur),
+        "}",
+    ]
+    if glass_enabled:
+        # 不给 floating 的 ChatUI 侧栏强加边框，只在打开态用阴影做层次分隔。
+        rules.extend(
+            [
+                "",
+                "html.astrbot-palette-active #app .v-navigation-drawer.v-navigation-drawer--temporary.v-navigation-drawer--active {",
+                "  box-shadow: 0 16px 36px rgba(0, 0, 0, 0.26), "
+                "inset 0 1px 0 rgba(255, 255, 255, 0.12) !important;",
+                "}",
+            ]
+        )
+    return "\n".join(rules)
 
 
 def _readability_css(text_effect: str, icon_effect: str) -> str:
