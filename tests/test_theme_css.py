@@ -470,6 +470,104 @@ class MobileSidebarGlassTest(unittest.TestCase):
         )
 
 
+class AstrBot428SurfaceTest(unittest.TestCase):
+    """AstrBot 4.28 新页面结构的覆盖回归测试。
+
+    4.28 重构了配置页（config-workspace 滚动结构）、平台/提供商工作台
+    （platform-workbench/provider-workbench）并新增会话工作区
+    （conversation-workspace，--workspace-* 变量驱动），这些选择器必须
+    持续命中，防止后续改动悄悄丢失对新页面的覆盖。
+    """
+
+    def test_conversation_workspace_variables_taken_over(self) -> None:
+        bodies = _rules_bodies(_css(), ".conversation-workspace")
+        self.assertTrue(bodies, "未找到 .conversation-workspace 变量接管规则")
+        for variable in ("--workspace-card", "--workspace-surface", "--workspace-subtle"):
+            self.assertTrue(
+                any(variable in body for body in bodies),
+                f".conversation-workspace 缺少 {variable} 接管",
+            )
+        self.assertTrue(
+            any("background: transparent !important;" in body for body in bodies)
+        )
+
+    def test_new_glass_carriers_blur_by_default(self) -> None:
+        css = _css()
+        for selector in (
+            ".conversation-workspace .workspace-card",
+            ".platform-page .platform-workbench",
+            ".unsaved-changes-pill",
+            ".config-panel .config-standard-section__groups .v-card",
+        ):
+            bodies = _rules_bodies(css, selector)
+            self.assertTrue(bodies, f"未找到以 {selector} 结尾的规则")
+            self.assertTrue(
+                any("blur(14px)" in body for body in bodies),
+                f"{selector} 默认应带玻璃模糊",
+            )
+
+    def test_new_glass_carriers_respect_zero_blur(self) -> None:
+        css = _css({"stats_card_blur": 0})
+        for selector in (
+            ".conversation-workspace .workspace-card",
+            ".platform-page .platform-workbench",
+            ".unsaved-changes-pill",
+        ):
+            bodies = _rules_bodies(css, selector)
+            self.assertTrue(bodies, f"未找到以 {selector} 结尾的规则")
+            self.assertTrue(
+                any("backdrop-filter: none !important;" in body for body in bodies),
+                f"{selector} 在 stats_card_blur=0 时必须输出 none",
+            )
+
+    def test_new_inner_surfaces_disable_filter(self) -> None:
+        css = _css()
+        for selector in (".config-panel .ai-disabled-state",):
+            bodies = _rules_bodies(css, selector)
+            self.assertTrue(bodies, f"未找到以 {selector} 结尾的规则")
+            self.assertTrue(
+                any("backdrop-filter: none !important;" in body for body in bodies),
+                f"{selector} 内层表面不得叠加模糊",
+            )
+
+    def test_platform_page_variables_taken_over(self) -> None:
+        bodies = _rules_bodies(_css(), ".platform-page")
+        self.assertTrue(bodies, "未找到 .platform-page 变量接管规则")
+        for variable in ("--platform-surface", "--platform-border"):
+            self.assertTrue(
+                any(variable in body for body in bodies),
+                f".platform-page 缺少 {variable} 接管",
+            )
+
+    def test_config_toolbar_sticky_backdrop_follows_opacity(self) -> None:
+        bodies = _rules_bodies(_css(), ".config-toolbar-sticky::before")
+        self.assertTrue(bodies, "未找到粘性工具栏背景条规则")
+        self.assertTrue(
+            any(
+                "rgba(var(--v-theme-containerBg)" in body and "blur(14px)" in body
+                for body in bodies
+            ),
+            "粘性工具栏背景条应跟随透明度并玻璃化",
+        )
+
+    def test_config_workspace_border_variables_taken_over(self) -> None:
+        bodies = _rules_bodies(_css(), ".config-panel .config-workspace")
+        self.assertTrue(bodies, "未找到 .config-workspace 边框变量接管规则")
+        for variable in ("--config-border", "--config-divider"):
+            self.assertTrue(
+                any(variable in body for body in bodies),
+                f".config-workspace 缺少 {variable} 接管",
+            )
+
+    def test_config_profile_menu_overlay_surface(self) -> None:
+        bodies = _rules_bodies(_css(), ".config-profile-menu")
+        self.assertTrue(bodies, "未找到配置方案菜单 overlay 规则")
+        self.assertTrue(
+            any("box-shadow: none !important;" in body for body in bodies),
+            "配置方案菜单应去除原生阴影",
+        )
+
+
 class CssIntegrityTest(unittest.TestCase):
     def test_braces_are_balanced(self) -> None:
         for config in (

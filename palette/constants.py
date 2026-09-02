@@ -2,8 +2,8 @@ from __future__ import annotations
 
 PLUGIN_NAME = "astrbot_plugin_palette"
 DISPLAY_NAME = "AstrBot调色盘"
-VERSION = "0.4.15"
-THEME_CACHE_VERSION = "20260725-104739"
+VERSION = "0.4.16"
+THEME_CACHE_VERSION = "20260902-130511"
 AUTHOR = "C₂₂H₂₅NO₆"
 DESCRIPTION = "AstrBot调色盘是一个 AstrBot WebUI 美化插件"
 ROUTE_PREFIX = f"/{PLUGIN_NAME}"
