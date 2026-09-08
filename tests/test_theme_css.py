@@ -568,6 +568,342 @@ class AstrBot428SurfaceTest(unittest.TestCase):
         )
 
 
+class AstrBot428TransparencyDetailTest(unittest.TestCase):
+    """0.4.17：AstrBot 4.28.0 透明化细节补齐的回归测试。
+
+    覆盖机器人标题栏、窄屏配置导航、模型选择菜单、人设能力列表
+    （正文与弹窗两处入口）、Trace 卡片与吸顶表头、供应商列表选中态、
+    旧版会话详情消息容器。只断言行为约束，不做整段快照。
+    """
+
+    def test_bot_editor_header_transparent(self) -> None:
+        bodies = _rules_bodies(_css(), ".platform-page .bot-editor__header")
+        self.assertTrue(bodies, "未找到机器人标题栏覆盖规则")
+        self.assertTrue(
+            any(
+                "background: transparent !important;" in body
+                and "background-color: transparent !important;" in body
+                and "box-shadow: none !important;" in body
+                and "backdrop-filter: none !important;" in body
+                and "-webkit-backdrop-filter: none !important;" in body
+                for body in bodies
+            ),
+            "机器人标题栏应透明且不再叠加滤镜或阴影",
+        )
+
+    def test_mobile_config_nav_rules_only_inside_720_media(self) -> None:
+        css = _css()
+        block = _media_block(css, "@media (max-width: 720px)")
+        self.assertIn(".config-panel .config-workspace__nav-item", block)
+        outside = css.replace(block, "")
+        self.assertNotIn(
+            "config-workspace__nav-item",
+            outside,
+            "配置导航覆盖只允许出现在 720px 媒体查询内，桌面规则不变",
+        )
+
+    def test_mobile_config_nav_states(self) -> None:
+        block = _media_block(_css(), "@media (max-width: 720px)")
+        normal = _rules_bodies(block, ".config-panel .config-workspace__nav-item")
+        hover = _rules_bodies(block, ".config-panel .config-workspace__nav-item:hover")
+        active = _rules_bodies(
+            block, ".config-panel .config-workspace__nav-item--active"
+        )
+        self.assertTrue(
+            any("background: transparent !important;" in body for body in normal),
+            "窄屏导航普通态应透明",
+        )
+        self.assertTrue(
+            any(
+                "rgba(var(--v-theme-on-surface), 0.045)" in body for body in hover
+            ),
+            "窄屏导航悬停应保留原生 0.045 半透明底",
+        )
+        self.assertTrue(
+            any(
+                "rgba(var(--v-theme-on-surface), 0.07)" in body for body in active
+            ),
+            "窄屏导航选中应保留原生 0.07 底色",
+        )
+        self.assertGreater(
+            block.index(".config-workspace__nav-item--active"),
+            block.index(".config-workspace__nav-item:hover"),
+            "选中规则必须位于悬停规则之后，保证选中优先于悬停",
+        )
+
+    def test_mobile_config_nav_active_hover_combo(self) -> None:
+        # 单独的 --active 选择器特异度（1-4-1）低于 :hover（1-4-2），
+        # 缺少 --active:hover 组合规则时，选中项悬停会退回 0.045 悬停色；
+        # 该断言确保误删组合选择器时测试失败。
+        block = _media_block(_css(), "@media (max-width: 720px)")
+        combo = _rules_bodies(
+            block, ".config-panel .config-workspace__nav-item--active:hover"
+        )
+        self.assertTrue(
+            combo,
+            "缺少 --active:hover 组合规则，选中且悬停时会被普通悬停色盖住",
+        )
+        self.assertTrue(
+            any(
+                "background: rgba(var(--v-theme-on-surface), 0.07) !important;"
+                in body
+                and "background-color: rgba(var(--v-theme-on-surface), 0.07)"
+                " !important;" in body
+                for body in combo
+            ),
+            "--active:hover 组合态应输出 0.07 选中底色，"
+            "并同时覆盖 background/background-color",
+        )
+
+    def test_provider_menu_card_outer_glass(self) -> None:
+        bodies = _rules_bodies(_css(), ".v-menu .provider-menu-card")
+        self.assertTrue(bodies, "未找到模型菜单外层卡片规则")
+        self.assertTrue(
+            any(
+                "rgba(var(--v-theme-surface), calc(0.54" in body
+                and "blur(14px) saturate(1.08)" in body
+                and "border-color:" in body
+                and "box-shadow:" in body
+                for body in bodies
+            ),
+            "模型菜单外层应复用 surface_strong 玻璃表面并承担模糊",
+        )
+
+    def test_provider_menu_card_blur_bounds(self) -> None:
+        max_bodies = _rules_bodies(
+            _css({"stats_card_blur": 40}), ".v-menu .provider-menu-card"
+        )
+        self.assertTrue(
+            any("blur(40px) saturate(1.08)" in body for body in max_bodies),
+            "stats_card_blur=40 时模型菜单应输出 blur(40px)",
+        )
+        zero_bodies = _rules_bodies(
+            _css({"stats_card_blur": 0, "surface_opacity": 1}),
+            ".v-menu .provider-menu-card",
+        )
+        self.assertTrue(
+            any(
+                "background: transparent !important;" in body
+                and "backdrop-filter: none !important;" in body
+                and "blur(" not in body
+                for body in zero_bodies
+            ),
+            "stats_card_blur=0 时模型菜单必须关闭玻璃，且不被 surface_opacity 重新染色",
+        )
+
+    def test_provider_menu_inner_surfaces_transparent(self) -> None:
+        css = _css()
+        for suffix in (
+            ".provider-menu-card .provider-menu-list",
+            ".provider-menu-card .selected-provider-list",
+            ".provider-menu-card .provider-search .v-field",
+        ):
+            bodies = _rules_bodies(css, suffix)
+            self.assertTrue(bodies, f"未找到以 {suffix} 结尾的规则")
+            self.assertTrue(
+                any(
+                    "background: transparent !important;" in body
+                    and "backdrop-filter: none !important;" in body
+                    and "blur(" not in body
+                    for body in bodies
+                ),
+                f"{suffix} 应透明且无独立模糊",
+            )
+
+    def test_persona_capability_list_transparent_in_main(self) -> None:
+        css = _css()
+        shell = _rules_bodies(css, ".persona-preview-card .capability-list")
+        items = _rules_bodies(
+            css, ".persona-preview-card .capability-list .capability-list__items"
+        )
+        self.assertTrue(shell, "未找到正文人设能力列表外壳规则")
+        self.assertTrue(
+            any(
+                "background: transparent !important;" in body
+                and "backdrop-filter: none !important;" in body
+                and "rgba(var(--v-theme-on-surface)" in body
+                for body in shell
+            ),
+            "正文能力列表外壳应透明并复用主题边框",
+        )
+        self.assertTrue(items, "未找到正文人设能力列表内部列表规则")
+        self.assertTrue(
+            any(
+                "background: transparent !important;" in body
+                and "backdrop-filter: none !important;" in body
+                and "blur(" not in body
+                for body in items
+            ),
+            "正文能力列表内部 v-list 应透明且无独立模糊",
+        )
+
+    def test_persona_capability_list_transparent_in_dialog(self) -> None:
+        css = _css()
+        shell = _rules_bodies(
+            css, ".v-overlay-container .v-dialog .persona-form-card .capability-list"
+        )
+        items = _rules_bodies(
+            css,
+            ".v-overlay-container .v-dialog .persona-form-card "
+            ".capability-list .capability-list__items",
+        )
+        self.assertTrue(shell, "未找到弹窗人设能力列表外壳规则")
+        self.assertTrue(
+            any(
+                "background: transparent !important;" in body
+                and "backdrop-filter: none !important;" in body
+                for body in shell
+            ),
+            "弹窗能力列表外壳应透明且不带滤镜",
+        )
+        self.assertTrue(items, "未找到弹窗人设能力列表内部列表规则")
+        self.assertTrue(
+            any(
+                "background: transparent !important;" in body
+                and "backdrop-filter: none !important;" in body
+                and "blur(" not in body
+                for body in items
+            ),
+            "弹窗能力列表内部 v-list 应透明且无独立模糊",
+        )
+
+    def test_trace_card_variable_taken_over(self) -> None:
+        bodies = _rules_bodies(_css(), ".trace-page")
+        self.assertTrue(bodies, "未找到 .trace-page 规则")
+        self.assertTrue(
+            any(
+                "--trace-card: rgba(var(--v-theme-surface), calc(0.42" in body
+                and "!important" in body
+                for body in bodies
+            ),
+            ".trace-page 应以 !important 接管 --trace-card 为普通玻璃表面",
+        )
+
+    def test_trace_card_blur_lifecycle(self) -> None:
+        default_bodies = _rules_bodies(_css(), ".trace-page .trace-card")
+        self.assertTrue(
+            any("blur(14px) saturate(1.08)" in body for body in default_bodies),
+            "Trace 主卡片默认应承担玻璃模糊",
+        )
+        max_bodies = _rules_bodies(
+            _css({"stats_card_blur": 40}), ".trace-page .trace-card"
+        )
+        self.assertTrue(
+            any("blur(40px) saturate(1.08)" in body for body in max_bodies),
+            "stats_card_blur=40 时 Trace 主卡片应输出 blur(40px)",
+        )
+        zero_bodies = _rules_bodies(
+            _css({"stats_card_blur": 0, "surface_opacity": 1}),
+            ".trace-page .trace-card",
+        )
+        self.assertTrue(
+            any(
+                "backdrop-filter: none !important;" in body
+                and "border: 1px solid transparent !important;" in body
+                and "box-shadow: none !important;" in body
+                and "blur(" not in body
+                for body in zero_bodies
+            ),
+            "stats_card_blur=0 时 Trace 主卡片的滤镜、边框、阴影均应关闭",
+        )
+
+    def test_trace_header_inner_surface_without_filter(self) -> None:
+        bodies = _rules_bodies(_css(), ".trace-page .trace-header")
+        self.assertTrue(bodies, "未找到 Trace 表头规则")
+        self.assertTrue(
+            any(
+                "rgba(var(--v-theme-surface), calc(0.30" in body
+                and "backdrop-filter: none !important;" in body
+                and "-webkit-backdrop-filter: none !important;" in body
+                for body in bodies
+            ),
+            "Trace 吸顶表头应复用内层半透明表面并显式关闭滤镜",
+        )
+
+    def test_provider_source_item_state_rules(self) -> None:
+        css = _css()
+        state_bodies = _rules_bodies(
+            css, ".provider-page .provider-source-item--active"
+        )
+        self.assertTrue(state_bodies, "未找到供应商列表选中态规则")
+        self.assertTrue(
+            any(
+                "background: rgba(var(--v-theme-on-surface), 0.05) !important;"
+                in body
+                and "background-color: rgba(var(--v-theme-on-surface), 0.05)"
+                " !important;" in body
+                for body in state_bodies
+            ),
+            "选中态应使用原生 on-surface 0.05 并同时覆盖 background/background-color",
+        )
+        hover_bodies = _rules_bodies(
+            css, ".provider-page .provider-source-item:hover"
+        )
+        self.assertTrue(
+            any(
+                "rgba(var(--v-theme-on-surface), 0.05)" in body
+                for body in hover_bodies
+            ),
+            "悬停态应使用原生 on-surface 0.05",
+        )
+
+    def test_provider_source_item_state_after_plain_glass(self) -> None:
+        css = _css()
+        plain_marker = (
+            ".provider-page .provider-source-item,\n"
+            "html.astrbot-palette-active #app .v-main "
+            ".extension-page .extension-card,"
+        )
+        plain_index = css.index(plain_marker)
+        state_index = css.index(".provider-page .provider-source-item--active {")
+        self.assertGreater(
+            state_index,
+            plain_index,
+            "选中态规则必须输出在普通项玻璃规则之后，否则仍会被盖住",
+        )
+
+    def test_provider_source_item_state_survives_zero_blur(self) -> None:
+        css = _css({"stats_card_blur": 0})
+        state_bodies = _rules_bodies(
+            css, ".provider-page .provider-source-item--active"
+        )
+        self.assertTrue(
+            any(
+                "rgba(var(--v-theme-on-surface), 0.05)" in body
+                for body in state_bodies
+            ),
+            "选中态底色不随毛玻璃关闭而消失",
+        )
+
+    def test_conversation_messages_container_transparent(self) -> None:
+        css = _css()
+        bodies = _rules_bodies(
+            css, ".conversation-detail-card .conversation-messages-container"
+        )
+        self.assertTrue(bodies, "未找到旧版会话消息容器规则")
+        self.assertTrue(
+            any(
+                "background: transparent !important;" in body
+                and "background-color: transparent !important;" in body
+                and "backdrop-filter: none !important;" in body
+                and "-webkit-backdrop-filter: none !important;" in body
+                for body in bodies
+            ),
+            "旧版会话消息容器应透明且无新增模糊",
+        )
+        self.assertIn(
+            ".v-overlay-container .v-dialog "
+            ".conversation-detail-card .conversation-messages-container",
+            css,
+            "消息容器规则必须限定在会话详情弹窗 overlay 作用域内",
+        )
+        self.assertNotIn(
+            ".v-main .conversation-messages-container",
+            css,
+            "消息容器规则不得泄漏到正文作用域",
+        )
+
+
 class CssIntegrityTest(unittest.TestCase):
     def test_braces_are_balanced(self) -> None:
         for config in (

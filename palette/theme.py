@@ -69,7 +69,7 @@ def build_theme_css(config: dict[str, Any]) -> str:
 
     return "\n".join(
         [
-            "/* AstrBot调色盘 0.4.16 运行时主题 CSS */",
+            "/* AstrBot调色盘 0.4.17 运行时主题 CSS */",
             ":root {",
             f"  --astrbot-palette-enabled: {enabled};",
             "  --astrbot-palette-background-image: none;",
@@ -1091,12 +1091,109 @@ def _stats_highlight_css(stats_card_blur: int) -> str:
             "  overflow: hidden;",
             "}",
             "",
+            # 供应商列表的悬停/选中底色：上方普通项玻璃规则（surface_strong 组）
+            # 作用域更长、特异度更高且位置靠后，会盖住前文不带 .provider-page
+            # 作用域的旧选中规则；这里在普通态规则之后以同等作用域补回原生
+            # on-surface 0.05 状态色。状态色是固定交互反馈，不乘透明度，
+            # 也不随毛玻璃开关关闭。
+            "html.astrbot-palette-active #app .v-main .provider-page .provider-source-item:hover,",
+            "html.astrbot-palette-active #app .v-main .provider-page .provider-source-item--active {",
+            "  background: rgba(var(--v-theme-on-surface), 0.05) !important;",
+            "  background-color: rgba(var(--v-theme-on-surface), 0.05) !important;",
+            "}",
+            "",
             "html.astrbot-palette-active #app .v-main .config-page .config-toolbar,",
             "html.astrbot-palette-active #app .v-main .config-panel .config-toolbar {",
             "  background: transparent !important;",
             "  background-color: transparent !important;",
             "  border-color: transparent !important;",
             "  box-shadow: none !important;",
+            "  backdrop-filter: none !important;",
+            "  -webkit-backdrop-filter: none !important;",
+            "}",
+            "",
+            # 4.28 平台页机器人编辑器标题栏：原生为实色 surface，盖在工作台
+            # 玻璃上方会形成不透明色条；改为透明，底色由工作台玻璃承载，
+            # 标题栏自身不再叠加滤镜或阴影。
+            "html.astrbot-palette-active #app .v-main .platform-page .bot-editor__header {",
+            "  background: transparent !important;",
+            "  background-color: transparent !important;",
+            "  box-shadow: none !important;",
+            "  backdrop-filter: none !important;",
+            "  -webkit-backdrop-filter: none !important;",
+            "}",
+            "",
+            # 4.28 Trace 页：主卡片底色由 --trace-card 变量驱动（亮主题实色
+            # #f5f6f7、暗主题 on-surface 0.06），用 !important 接管为普通玻璃
+            # 表面，同时压住 .trace-page.is-dark 的暗色变体；.trace-card 是
+            # 本页唯一新增的模糊载体。
+            "html.astrbot-palette-active #app .v-main .trace-page {",
+            f"  --trace-card: {surface} !important;",
+            "}",
+            "",
+            "html.astrbot-palette-active #app .v-main .trace-page .trace-card {",
+            f"  border: 1px solid {border} !important;",
+            f"  box-shadow: {shadow} !important;",
+            *_backdrop_filter_lines(blur),
+            "}",
+            "",
+            # Trace 吸顶表头原生直接使用 --trace-card，接管后会与外层玻璃
+            # 底色叠加发浑；改用内层半透明表面并显式关闭滤镜。
+            "html.astrbot-palette-active #app .v-main .trace-page .trace-header {",
+            f"  background: {config_row_surface} !important;",
+            f"  background-color: {config_row_surface} !important;",
+            "  backdrop-filter: none !important;",
+            "  -webkit-backdrop-filter: none !important;",
+            "}",
+            "",
+            # 人设能力列表（工具/技能）：外壳与内部 v-list 原生为实色 surface，
+            # 正文预览卡与人设弹窗两处入口统一恢复透明，外壳边框沿用主题
+            # 边框，不新增嵌套玻璃。
+            "html.astrbot-palette-active #app .v-main .persona-preview-card .capability-list,",
+            "html.astrbot-palette-active .v-overlay-container .v-dialog .persona-form-card .capability-list {",
+            "  background: transparent !important;",
+            "  background-color: transparent !important;",
+            f"  border-color: {border} !important;",
+            "  box-shadow: none !important;",
+            "  backdrop-filter: none !important;",
+            "  -webkit-backdrop-filter: none !important;",
+            "}",
+            "",
+            "html.astrbot-palette-active #app .v-main .persona-preview-card .capability-list .capability-list__items,",
+            "html.astrbot-palette-active .v-overlay-container .v-dialog .persona-form-card .capability-list .capability-list__items {",
+            "  background: transparent !important;",
+            "  background-color: transparent !important;",
+            "  backdrop-filter: none !important;",
+            "  -webkit-backdrop-filter: none !important;",
+            "}",
+            "",
+            # 4.28 模型选择菜单（v-menu 挂载在 overlay 容器）：外层卡片原生
+            # 实色 surface，接管为 surface_strong 玻璃表面；内部列表与搜索框
+            # 恢复透明且不再叠加滤镜，避免在玻璃层内再挡一层实色。
+            "html.astrbot-palette-active .v-overlay-container .v-menu .provider-menu-card {",
+            f"  background: {surface_strong} !important;",
+            f"  background-color: {surface_strong} !important;",
+            f"  border-color: {border} !important;",
+            f"  box-shadow: {shadow} !important;",
+            *_backdrop_filter_lines(blur),
+            "}",
+            "",
+            "html.astrbot-palette-active .v-overlay-container .v-menu .provider-menu-card .provider-menu-list,",
+            "html.astrbot-palette-active .v-overlay-container .v-menu .provider-menu-card .selected-provider-list,",
+            "html.astrbot-palette-active .v-overlay-container .v-menu .provider-menu-card .provider-search .v-field {",
+            "  background: transparent !important;",
+            "  background-color: transparent !important;",
+            "  box-shadow: none !important;",
+            "  backdrop-filter: none !important;",
+            "  -webkit-backdrop-filter: none !important;",
+            "}",
+            "",
+            # 旧版会话详情弹窗的消息容器：原生亮/暗主题均为实色
+            # （#f9f9f9/#1e1e1e），定向恢复透明；消息气泡、工具卡片与
+            # Monaco 编辑器的样式不受影响。
+            "html.astrbot-palette-active .v-overlay-container .v-dialog .conversation-detail-card .conversation-messages-container {",
+            "  background: transparent !important;",
+            "  background-color: transparent !important;",
             "  backdrop-filter: none !important;",
             "  -webkit-backdrop-filter: none !important;",
             "}",
@@ -1328,6 +1425,28 @@ def _stats_highlight_css(stats_card_blur: int) -> str:
             "html.astrbot-palette-active #app .v-main .stats-page .system-row,",
             "html.astrbot-palette-active #app .v-main .stats-page .system-meta-item {",
             f"  color: {subtle} !important;",
+            "}",
+            "",
+            # 4.28 配置工作区在窄屏（≤720px）下把导航项改成实色 surface 块，
+            # 这里恢复透明，悬停/选中沿用桌面端的原生半透明反馈
+            # （0.045/0.07）；选中规则放在悬停之后并追加 --active:hover
+            # 组合，保证选中优先于悬停。桌面（>720px）原生即透明，不覆盖。
+            "@media (max-width: 720px) {",
+            "  html.astrbot-palette-active #app .v-main .config-panel .config-workspace__nav-item {",
+            "    background: transparent !important;",
+            "    background-color: transparent !important;",
+            "  }",
+            "",
+            "  html.astrbot-palette-active #app .v-main .config-panel .config-workspace__nav-item:hover {",
+            "    background: rgba(var(--v-theme-on-surface), 0.045) !important;",
+            "    background-color: rgba(var(--v-theme-on-surface), 0.045) !important;",
+            "  }",
+            "",
+            "  html.astrbot-palette-active #app .v-main .config-panel .config-workspace__nav-item--active,",
+            "  html.astrbot-palette-active #app .v-main .config-panel .config-workspace__nav-item--active:hover {",
+            "    background: rgba(var(--v-theme-on-surface), 0.07) !important;",
+            "    background-color: rgba(var(--v-theme-on-surface), 0.07) !important;",
+            "  }",
             "}",
             "",
             "@media (max-width: 640px) {",

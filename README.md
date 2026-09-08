@@ -6,11 +6,11 @@
 
 AstrBot调色盘是一个 AstrBot WebUI 美化插件。当前版本聚焦于背景图库、透明界面、Liquid Glass 设置页、文字可读性增强和壁纸主题色联动，让 Dashboard 可以在不修改 AstrBot 源码的前提下换上自定义壁纸。
 
-当前已兼容 AstrBot `4.28.0-beta.1`。
+当前已适配 AstrBot `4.28.0`。
 
-> 当前版本：`0.4.16`
+> 当前版本：`0.4.17`
 >
-> 兼容 AstrBot：`>=4.26.0-beta1`，已兼容 `4.28.0-beta.1`
+> 兼容 AstrBot：`>=4.26.0-beta1`，已适配 `4.28.0`（运行时验证基于 `4.28.0-beta.1` 完成；`4.28.0` 正式版的新增样式覆盖经源码静态核对与单元测试验证）
 
 ## 功能
 
@@ -61,7 +61,7 @@ git clone https://github.com/Sisyphbaous-DT-Project/astrbot_plugin_palette.git
 
 - 插件名：`astrbot_plugin_palette`
 - 展示名：`AstrBot调色盘`
-- 版本：`0.4.16`
+- 版本：`0.4.17`
 
 ## 使用
 
@@ -263,7 +263,7 @@ python -m unittest discover -s tests -p "test_*.py"
 git diff --check
 ```
 
-如果要在本地 AstrBot 中测试，建议复制插件目录到 `data/plugins/astrbot_plugin_palette`，不要使用软链接或 bind mount。
+如果要在本地 AstrBot 中测试，建议正常安装或复制插件目录到 `data/plugins/astrbot_plugin_palette`。AstrBot 4.28 起插件设置页改为文件系统扫描发现，符号链接挂载会被安全检查拦截导致设置页入口消失；获准联调时可临时使用 bind mount 方式挂载插件目录。
 
 ## 更新日志
 
@@ -310,6 +310,8 @@ git diff --check
 `0.4.15` 修复窄屏下透明浮层侧栏与主内容文字重叠的问题，新增独立的移动端侧栏毛玻璃强度配置，主侧栏和聊天页侧栏一并适配，并更换插件图标与 README 主视觉图。
 
 `0.4.16` 适配 AstrBot `4.28.0-beta.1`：覆盖配置页滚动工作区、全新会话工作区、平台/提供商工作台和数据页路由合并后的新结构，配置页粘性工具栏改为玻璃条，未保存提示与界面毛玻璃强度联动。
+
+`0.4.17` 补齐 AstrBot `4.28.0` 正式版的透明化细节：机器人编辑器标题栏、窄屏配置导航、模型选择菜单、人设工具/技能列表、Trace 主卡片与吸顶表头、旧版会话消息容器，并修复供应商列表选中底色被普通项玻璃规则盖住的问题。
 
 后续版本会继续补齐更多页面的透明化细节，并探索更完整的主题色板推导。
 
