@@ -92,6 +92,8 @@ def ensure_dashboard_injection(paths: PalettePaths) -> InjectionStatus:
     """向 AstrBot 运行时 Dashboard 入口注入调色盘启动脚本。"""
 
     target = _resolve_dashboard_target(paths, allow_copy_fallback=True)
+    if target is None:
+        return _unsupported_no_target_status()
     index_file = target.index
     target_info = _dashboard_target_info(target)
     if not index_file.is_file():
@@ -180,6 +182,8 @@ def inspect_injection(paths: PalettePaths) -> InjectionStatus:
     """
 
     target = _resolve_dashboard_target(paths, allow_copy_fallback=True)
+    if target is None:
+        return _unsupported_no_target_status()
     return _inspect_target(target)
 
 
@@ -293,27 +297,28 @@ def _resolve_dashboard_target(
     paths: PalettePaths,
     *,
     allow_copy_fallback: bool,
-) -> DashboardTarget:
+) -> DashboardTarget | None:
     custom_dist = _custom_dashboard_dist()
+    if resolve_dashboard_dist is not None:
+        try:
+            resolved_dist = _resolve_with_public_resolver(custom_dist)
+        except Exception:
+            # 公开解析器调用失败：与 4.26.x 缺少该函数时一致，回退旧选择逻辑
+            pass
+        else:
+            return _target_from_public_resolution(
+                paths,
+                resolved_dist,
+                custom_dist,
+                allow_copy_fallback=allow_copy_fallback,
+            )
+
     if custom_dist is not None:
         return _target_from_dist(
             custom_dist,
             "custom",
             compatible=_compatibility(custom_dist),
         )
-
-    resolved_dist = _resolve_with_public_resolver()
-    if resolved_dist is not None:
-        # 4.27.x 公开解析器已完成版本选择，不再重复判断兼容性
-        if _same_dashboard_dist(resolved_dist, paths.user_dashboard_dist):
-            if allow_copy_fallback and _is_prepared_fallback(paths):
-                return _target_from_dist(
-                    paths.user_dashboard_dist,
-                    "data/dist",
-                    restart_required=True,
-                )
-            return _target_from_dist(paths.user_dashboard_dist, "data/dist")
-        return _target_from_dist(resolved_dist, "bundled")
 
     user_target = _target_from_dist(
         paths.user_dashboard_dist,
@@ -342,18 +347,63 @@ def _resolve_dashboard_target(
     return user_target
 
 
-def _resolve_with_public_resolver() -> Path | None:
-    """通过 AstrBot 4.27.x 公开解析器获取实际服务的 Dashboard 目录。"""
+def _target_from_public_resolution(
+    paths: PalettePaths,
+    resolved_dist: Path | None,
+    custom_dist: Path | None,
+    *,
+    allow_copy_fallback: bool,
+) -> DashboardTarget | None:
+    """按公开解析器的实际选择构造目标。
 
-    if resolve_dashboard_dist is None:
+    解析器正常返回 None 表示核心未选出可用目录（如桌面托管模式拒绝
+    版本不匹配的目录），此时不得回退使用刚被拒绝的显式目录或残留
+    data/dist。解析器已完成版本与完整性校验，不再重复判断兼容性。
+    """
+
+    if resolved_dist is None:
         return None
-    try:
+    if _same_dashboard_dist(resolved_dist, paths.user_dashboard_dist):
+        if allow_copy_fallback and _is_prepared_fallback(paths):
+            # 显式目录也可能就是 data/dist；复制回退的待重启状态必须优先。
+            return _target_from_dist(
+                paths.user_dashboard_dist,
+                "data/dist",
+                restart_required=True,
+            )
+        if custom_dist is not None and _same_dashboard_dist(resolved_dist, custom_dist):
+            return _target_from_dist(resolved_dist, "custom")
+        return _target_from_dist(paths.user_dashboard_dist, "data/dist")
+    if custom_dist is not None and _same_dashboard_dist(resolved_dist, custom_dist):
+        return _target_from_dist(resolved_dist, "custom")
+    return _target_from_dist(resolved_dist, "bundled")
+
+
+def _resolve_with_public_resolver(custom_dist: Path | None) -> Path | None:
+    """通过 AstrBot 4.27+ 公开解析器获取实际服务的 Dashboard 目录。
+
+    显式目录交给核心解析，由核心决定接受或拒绝；调用异常向上传播，
+    由调用方与“解析器正常返回 None”区分。
+    """
+
+    if custom_dist is not None:
+        dist = resolve_dashboard_dist(custom_dist)
+    else:
         dist = resolve_dashboard_dist()
-    except Exception:
-        return None
     if dist is None:
         return None
     return Path(dist)
+
+
+def _unsupported_no_target_status() -> InjectionStatus:
+    """核心未选出可用 WebUI 目录时的统一状态。"""
+
+    return InjectionStatus(
+        supported=False,
+        patched=False,
+        index_exists=False,
+        message="AstrBot 核心未选出可用 WebUI 目录，未执行注入。",
+    )
 
 
 def _same_dashboard_dist(left: Path, right: Path) -> bool:

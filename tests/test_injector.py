@@ -188,14 +188,18 @@ class InjectorDashboardTargetTest(unittest.TestCase):
         self.assertEqual(target.dist, bundled)
         self.assertEqual(target.source, "bundled")
 
-    def test_custom_webui_dir_takes_priority(self) -> None:
-        """自定义 --webui-dir 优先于新解析器和旧逻辑。"""
+    def test_custom_webui_dir_takes_priority_without_resolver(self) -> None:
+        """4.26.x 无公开解析器：显式 --webui-dir 目录仍优先于旧逻辑。"""
 
         custom = self._make_dist("custom")
         bundled = self._make_dist("bundled")
         argv = ["main.py", "--webui-dir", str(custom)]
         with (
-            self._simulate(resolver=lambda: bundled),
+            self._simulate(
+                version="4.26.7",
+                bundled_getter=lambda: str(bundled),
+                is_compatible=lambda dist, version: True,
+            ),
             mock.patch.object(sys, "argv", argv),
         ):
             target = injector._resolve_dashboard_target(
@@ -203,6 +207,80 @@ class InjectorDashboardTargetTest(unittest.TestCase):
             )
         self.assertEqual(target.source, "custom")
         self.assertEqual(target.dist, custom.resolve())
+
+    def test_public_resolver_accepts_custom_webui_dir(self) -> None:
+        """4.27+：显式目录交给公开解析器，核心接受后目标来源为 custom。"""
+
+        custom = self._make_dist("custom")
+        seen: list[object] = []
+
+        def resolver(webui_dir=None):
+            seen.append(webui_dir)
+            return webui_dir  # 核心校验通过，沿用显式目录
+
+        argv = ["main.py", "--webui-dir", str(custom)]
+        with (
+            self._simulate(resolver=resolver),
+            mock.patch.object(sys, "argv", argv),
+        ):
+            target = injector._resolve_dashboard_target(
+                self.paths, allow_copy_fallback=False
+            )
+        self.assertEqual(seen, [custom.resolve()])
+        self.assertEqual(target.source, "custom")
+        self.assertEqual(target.dist, custom.resolve())
+        # 公开解析器已完成版本与完整性校验，插件不再重复判断
+        self.assertIsNone(target.compatible)
+
+    def test_public_resolver_rejects_custom_selects_data_dist(self) -> None:
+        """4.28.1 桌面托管：核心拒绝旧显式目录后只注入其选中的 data/dist。"""
+
+        custom = self._make_dist("custom")
+        custom_index = (custom / "index.html").read_text(encoding="utf-8")
+        user_dist = self._make_dist("data/dist")
+        seen: list[object] = []
+
+        def resolver(webui_dir=None):
+            seen.append(webui_dir)
+            return user_dist  # 拒绝显式目录，选中合格的 data/dist
+
+        argv = ["main.py", "--webui-dir", str(custom)]
+        with (
+            self._simulate(resolver=resolver),
+            mock.patch.object(sys, "argv", argv),
+        ):
+            status = injector.ensure_dashboard_injection(self.paths)
+        self.assertEqual(seen, [custom.resolve()])
+        self.assertTrue(status.patched)
+        self.assertEqual(status.target_source, "data/dist")
+        self.assertEqual(status.target, str(self.paths.user_dashboard_dist))
+        injected = (user_dist / "index.html").read_text(encoding="utf-8")
+        self.assertIn(INJECTION_START_MARKER, injected)
+        # 被拒绝的旧目录不得写入，内容逐字保持不变
+        self.assertEqual(
+            (custom / "index.html").read_text(encoding="utf-8"), custom_index
+        )
+
+    def test_public_resolver_rejects_custom_selects_bundled(self) -> None:
+        """4.28.1 桌面托管：核心拒绝显式目录后选中内置目录，识别为 bundled。"""
+
+        custom = self._make_dist("custom")
+        bundled = self._make_dist("bundled")
+
+        def resolver(webui_dir=None):
+            return bundled
+
+        argv = ["main.py", "--webui-dir", str(custom)]
+        with (
+            self._simulate(resolver=resolver),
+            mock.patch.object(sys, "argv", argv),
+        ):
+            target = injector._resolve_dashboard_target(
+                self.paths, allow_copy_fallback=False
+            )
+        self.assertEqual(target.source, "bundled")
+        self.assertEqual(target.dist, bundled)
+        self.assertIsNone(target.compatible)
 
     def test_public_resolver_data_dist_source(self) -> None:
         """新解析器返回 data/dist 时状态来源为 data/dist。"""
@@ -215,28 +293,47 @@ class InjectorDashboardTargetTest(unittest.TestCase):
         self.assertEqual(target.source, "data/dist")
         self.assertEqual(target.dist, user_dist)
 
-    def test_public_resolver_none_falls_back_to_legacy(self) -> None:
-        """新解析器返回 None 时安全回退旧逻辑。"""
+    def test_public_resolver_none_yields_no_target(self) -> None:
+        """解析器正常返回 None：核心未选出可用目录，不得回退旧目录。"""
 
-        bundled = self._make_dist("bundled")
-        self._make_dist("data/dist")
-        with self._simulate(
-            version="4.26.7",
-            resolver=lambda: None,
-            bundled_getter=lambda: str(bundled),
-            is_compatible=lambda dist, version: False,
-            should_use_bundled=lambda user, version: True,
+        custom = self._make_dist("custom")
+        custom_index = (custom / "index.html").read_text(encoding="utf-8")
+        user_dist = self._make_dist("data/dist")
+        user_index = (user_dist / "index.html").read_text(encoding="utf-8")
+
+        def resolver(webui_dir=None):
+            return None  # 桌面托管模式拒绝全部候选目录
+
+        argv = ["main.py", "--webui-dir", str(custom)]
+        with (
+            self._simulate(resolver=resolver),
+            mock.patch.object(sys, "argv", argv),
         ):
             target = injector._resolve_dashboard_target(
-                self.paths, allow_copy_fallback=False
+                self.paths, allow_copy_fallback=True
             )
-        self.assertEqual(target.dist, bundled)
-        self.assertEqual(target.source, "bundled")
+            status = injector.ensure_dashboard_injection(self.paths)
+            inspect = injector.inspect_injection(self.paths)
+        self.assertIsNone(target)
+        for result in (status, inspect):
+            self.assertFalse(result.supported)
+            self.assertFalse(result.patched)
+            self.assertFalse(result.index_exists)
+            self.assertEqual(result.target, "")
+            self.assertIn("未选出可用 WebUI 目录", result.message)
+        # 不注入、不复制、不新建备份，两个旧入口逐字保持不变
+        self.assertEqual(
+            (custom / "index.html").read_text(encoding="utf-8"), custom_index
+        )
+        self.assertEqual(
+            (user_dist / "index.html").read_text(encoding="utf-8"), user_index
+        )
+        self.assertFalse(self.paths.patch_backup_dir.exists())
 
     def test_public_resolver_error_falls_back_to_legacy(self) -> None:
-        """新解析器抛异常时安全回退旧逻辑。"""
+        """新解析器抛异常时安全回退旧逻辑（与正常返回 None 区分）。"""
 
-        def broken_resolver():
+        def broken_resolver(webui_dir=None):
             raise RuntimeError("boom")
 
         bundled = self._make_dist("bundled")
@@ -365,6 +462,93 @@ class InjectorDashboardTargetTest(unittest.TestCase):
         content = (user_dist / "index.html").read_text(encoding="utf-8")
         self.assertEqual(content.count(INJECTION_START_MARKER), 1)
         self.assertEqual(content.count(INJECTION_END_MARKER), 1)
+
+    def test_explicit_data_dist_preserves_prepared_restart(self) -> None:
+        """显式目录就是 data/dist：复制新资源后仍须等待服务重启。"""
+
+        custom = self._make_dist("data/dist")
+        bundled = self._make_dist("bundled")
+        real_replace = Path.replace
+
+        def flaky_replace(this, target):
+            if str(target).startswith(str(bundled)):
+                raise OSError("read-only filesystem")
+            return real_replace(this, target)
+
+        def resolver(webui_dir=None):
+            self.assertEqual(webui_dir, custom.resolve())
+            marker = custom / injector._FALLBACK_RESTART_MARKER
+            return custom if marker.exists() else bundled
+
+        with (
+            self._simulate(resolver=resolver),
+            mock.patch.object(sys, "argv", ["main.py", "--webui-dir", str(custom)]),
+            mock.patch.object(Path, "replace", flaky_replace),
+        ):
+            results = (
+                injector.ensure_dashboard_injection(self.paths),
+                injector.ensure_dashboard_injection(self.paths),
+                injector.inspect_injection(self.paths),
+            )
+        for result in results:
+            self.assertTrue(result.patched)
+            self.assertTrue(result.restart_required)
+            self.assertEqual(result.target_source, "data/dist")
+        self.assertTrue((custom / injector._FALLBACK_RESTART_MARKER).is_file())
+
+    def test_explicit_data_dist_without_fallback_remains_custom(self) -> None:
+        """正常显式使用 data/dist 时，不凭目录名称误报需要重启。"""
+
+        custom = self._make_dist("data/dist")
+        with (
+            self._simulate(resolver=lambda webui_dir=None: webui_dir),
+            mock.patch.object(sys, "argv", ["main.py", "--webui-dir", str(custom)]),
+        ):
+            result = injector.ensure_dashboard_injection(self.paths)
+            inspected = injector.inspect_injection(self.paths)
+        for status in (result, inspected):
+            self.assertTrue(status.patched)
+            self.assertFalse(status.restart_required)
+            self.assertEqual(status.target_source, "custom")
+
+    def test_prepared_fallback_survives_custom_arg(self) -> None:
+        """命令行仍有被拒的 --webui-dir 时，待重启回退不误报 custom。"""
+
+        custom = self._make_dist("custom")
+        bundled = self._make_dist("bundled")
+        user_dist = self.paths.user_dashboard_dist
+        real_replace = Path.replace
+
+        def flaky_replace(this, target):
+            if str(target).startswith(str(bundled)):
+                raise OSError("read-only filesystem")
+            return real_replace(this, target)
+
+        def switching_resolver(webui_dir=None):
+            # 核心拒绝显式目录；复制完成后改选合格的 data/dist
+            return user_dist if user_dist.exists() else bundled
+
+        argv = ["main.py", "--webui-dir", str(custom)]
+        with (
+            self._simulate(resolver=switching_resolver),
+            mock.patch.object(sys, "argv", argv),
+            mock.patch.object(Path, "replace", flaky_replace),
+        ):
+            first = injector.ensure_dashboard_injection(self.paths)
+            second = injector.ensure_dashboard_injection(self.paths)
+            inspect = injector.inspect_injection(self.paths)
+            marker = user_dist / injector._FALLBACK_RESTART_MARKER
+
+        for status in (first, second, inspect):
+            self.assertTrue(status.patched)
+            self.assertTrue(status.restart_required)
+            self.assertEqual(status.target_source, "data/dist")
+        self.assertTrue(marker.is_file())
+        content = (user_dist / "index.html").read_text(encoding="utf-8")
+        self.assertEqual(content.count(INJECTION_START_MARKER), 1)
+        self.assertNotIn(
+            INJECTION_START_MARKER, (custom / "index.html").read_text(encoding="utf-8")
+        )
 
 
 _ENV_427 = '''

@@ -69,7 +69,7 @@ def build_theme_css(config: dict[str, Any]) -> str:
 
     return "\n".join(
         [
-            "/* AstrBot调色盘 0.4.17 运行时主题 CSS */",
+            "/* AstrBot调色盘 0.4.18 运行时主题 CSS */",
             ":root {",
             f"  --astrbot-palette-enabled: {enabled};",
             "  --astrbot-palette-background-image: none;",
@@ -1170,7 +1170,10 @@ def _stats_highlight_css(stats_card_blur: int) -> str:
             # 4.28 模型选择菜单（v-menu 挂载在 overlay 容器）：外层卡片原生
             # 实色 surface，接管为 surface_strong 玻璃表面；内部列表与搜索框
             # 恢复透明且不再叠加滤镜，避免在玻璃层内再挡一层实色。
-            "html.astrbot-palette-active .v-overlay-container .v-menu .provider-menu-card {",
+            # 4.28.1 新增的来源筛选菜单是独立挂载的 v-menu，与主菜单卡片
+            # 共用外层玻璃与内部透明规则。
+            "html.astrbot-palette-active .v-overlay-container .v-menu .provider-menu-card,",
+            "html.astrbot-palette-active .v-overlay-container .v-menu .provider-source-menu {",
             f"  background: {surface_strong} !important;",
             f"  background-color: {surface_strong} !important;",
             f"  border-color: {border} !important;",
@@ -1180,10 +1183,22 @@ def _stats_highlight_css(stats_card_blur: int) -> str:
             "",
             "html.astrbot-palette-active .v-overlay-container .v-menu .provider-menu-card .provider-menu-list,",
             "html.astrbot-palette-active .v-overlay-container .v-menu .provider-menu-card .selected-provider-list,",
-            "html.astrbot-palette-active .v-overlay-container .v-menu .provider-menu-card .provider-search .v-field {",
+            "html.astrbot-palette-active .v-overlay-container .v-menu .provider-menu-card .provider-search .v-field,",
+            "html.astrbot-palette-active .v-overlay-container .v-menu .provider-source-menu .v-list {",
             "  background: transparent !important;",
             "  background-color: transparent !important;",
             "  box-shadow: none !important;",
+            "  backdrop-filter: none !important;",
+            "  -webkit-backdrop-filter: none !important;",
+            "}",
+            "",
+            # 4.28.1 模型列表的来源分组吸顶标题：原生实色 surface，沿用
+            # Trace 表头模式改用内层半透明表面并显式关闭滤镜（外层卡片已
+            # 承担模糊）。其 sticky 定位与 32px 高度参与虚拟列表占位计算，
+            # 此规则不得覆盖任何几何或定位属性。
+            "html.astrbot-palette-active .v-overlay-container .v-menu .provider-menu-card .provider-source-header {",
+            f"  background: {config_row_surface} !important;",
+            f"  background-color: {config_row_surface} !important;",
             "  backdrop-filter: none !important;",
             "  -webkit-backdrop-filter: none !important;",
             "}",
@@ -1196,6 +1211,40 @@ def _stats_highlight_css(stats_card_blur: int) -> str:
             "  background-color: transparent !important;",
             "  backdrop-filter: none !important;",
             "  -webkit-backdrop-filter: none !important;",
+            "}",
+            "",
+            # 4.28.1 聊天设置弹窗：外壳原生实色 surface，接管为 surface_strong
+            # 玻璃表面，并定向接管 --settings-* 边框变量使其跟随毛玻璃开关。
+            # grid 布局、overflow 裁剪与 600px 响应式结构保持原生；侧栏导航
+            # 项三态（透明/0.045 悬停/0.07 选中）沿用原生规则，不重复覆盖。
+            "html.astrbot-palette-active .v-overlay-container .v-dialog .chat-settings {",
+            f"  background: {surface_strong} !important;",
+            f"  background-color: {surface_strong} !important;",
+            f"  border-color: {border} !important;",
+            f"  box-shadow: {shadow} !important;",
+            f"  --settings-border: {border} !important;",
+            f"  --settings-divider: {border} !important;",
+            *_backdrop_filter_lines(blur),
+            "}",
+            "",
+            # 4.28.1 添加供应商弹窗内的来源卡片：普通 div（非 v-card），原生
+            # 实色 surface，恢复透明并沿用主题边框，不新增滤镜与阴影。普通态
+            # 的 !important 会压住原生 hover，需在同作用域补回 0.045 悬停底色
+            # 与 0.2 边框。全卡片点击层 .source-card__select、链接的
+            # pointer-events 与 :focus-visible 轮廓均保持原生，不在此接管。
+            "html.astrbot-palette-active .v-overlay-container .v-dialog .source-dialog .source-card {",
+            "  background: transparent !important;",
+            "  background-color: transparent !important;",
+            f"  border-color: {border} !important;",
+            "  box-shadow: none !important;",
+            "  backdrop-filter: none !important;",
+            "  -webkit-backdrop-filter: none !important;",
+            "}",
+            "",
+            "html.astrbot-palette-active .v-overlay-container .v-dialog .source-dialog .source-card:hover {",
+            "  background: rgba(var(--v-theme-on-surface), 0.045) !important;",
+            "  background-color: rgba(var(--v-theme-on-surface), 0.045) !important;",
+            "  border-color: rgba(var(--v-theme-on-surface), 0.2) !important;",
             "}",
             "",
             # 4.28 配置页粘性工具栏的通栏背景条：原生是 containerBg 实色，

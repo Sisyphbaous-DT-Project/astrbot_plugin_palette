@@ -904,6 +904,295 @@ class AstrBot428TransparencyDetailTest(unittest.TestCase):
         )
 
 
+class AstrBot4281SurfaceTest(unittest.TestCase):
+    """AstrBot 4.28.1 新增界面适配的回归测试。
+
+    覆盖聊天设置弹窗外壳、模型来源筛选菜单与吸顶分组标题、添加供应商
+    弹窗内的来源卡片。只断言行为约束，不做整段快照。
+    """
+
+    def test_chat_settings_shell_glass_default_and_max(self) -> None:
+        default_bodies = _rules_bodies(_css(), ".v-dialog .chat-settings")
+        self.assertTrue(default_bodies, "未找到聊天设置弹窗外壳规则")
+        self.assertTrue(
+            any(
+                "rgba(var(--v-theme-surface), calc(0.54" in body
+                and "blur(14px) saturate(1.08)" in body
+                and "box-shadow:" in body
+                for body in default_bodies
+            ),
+            "聊天设置外壳默认应复用 surface_strong 玻璃表面并承担 blur(14px)",
+        )
+        max_bodies = _rules_bodies(
+            _css({"stats_card_blur": 40}), ".v-dialog .chat-settings"
+        )
+        self.assertTrue(
+            any("blur(40px) saturate(1.08)" in body for body in max_bodies),
+            "stats_card_blur=40 时聊天设置外壳应输出 blur(40px)",
+        )
+
+    def test_chat_settings_shell_zero_blur_stays_transparent(self) -> None:
+        bodies = _rules_bodies(
+            _css({"stats_card_blur": 0, "surface_opacity": 1}),
+            ".v-dialog .chat-settings",
+        )
+        self.assertTrue(bodies, "未找到聊天设置弹窗外壳规则")
+        self.assertTrue(
+            any(
+                "background: transparent !important;" in body
+                and "background-color: transparent !important;" in body
+                and "border-color: transparent !important;" in body
+                and "box-shadow: none !important;" in body
+                and "backdrop-filter: none !important;" in body
+                and "-webkit-backdrop-filter: none !important;" in body
+                and "blur(" not in body
+                for body in bodies
+            ),
+            "stats_card_blur=0 时聊天设置外壳必须恢复透明，"
+            "且不被 surface_opacity 重新染色",
+        )
+
+    def test_chat_settings_border_variables_follow_toggle(self) -> None:
+        default_bodies = _rules_bodies(_css(), ".v-dialog .chat-settings")
+        self.assertTrue(
+            any(
+                "--settings-border: rgba(var(--v-theme-on-surface), calc(0.20"
+                in body
+                and "--settings-divider: rgba(var(--v-theme-on-surface), calc(0.20"
+                in body
+                for body in default_bodies
+            ),
+            "默认应接管 --settings-border/--settings-divider 为玻璃边框",
+        )
+        zero_bodies = _rules_bodies(
+            _css({"stats_card_blur": 0, "surface_opacity": 1}),
+            ".v-dialog .chat-settings",
+        )
+        self.assertTrue(
+            any(
+                "--settings-border: transparent !important;" in body
+                and "--settings-divider: transparent !important;" in body
+                for body in zero_bodies
+            ),
+            "stats_card_blur=0 时 --settings-* 变量应跟随关闭为透明",
+        )
+
+    def test_chat_settings_layout_and_nav_not_overridden(self) -> None:
+        css = _css()
+        bodies = _rules_bodies(css, ".v-dialog .chat-settings")
+        self.assertTrue(bodies, "未找到聊天设置弹窗外壳规则")
+        for body in bodies:
+            for forbidden in (
+                "display:",
+                "grid",
+                "overflow",
+                "height",
+                "padding",
+                "margin",
+                "border-radius",
+            ):
+                self.assertNotIn(
+                    forbidden,
+                    body,
+                    f"聊天设置外壳规则不得接管布局属性 {forbidden}",
+                )
+        self.assertEqual(
+            css.count(".chat-settings"),
+            1,
+            "聊天设置只允许外壳一条规则，不新增内部或响应式批量覆盖",
+        )
+        self.assertNotIn(
+            "#app .v-main .chat-settings",
+            css,
+            "聊天设置规则必须按 overlay 结构定向，不依赖 #app .v-main 祖先",
+        )
+
+    def test_source_menu_shell_glass_default_and_max(self) -> None:
+        default_bodies = _rules_bodies(_css(), ".v-menu .provider-source-menu")
+        self.assertTrue(default_bodies, "未找到来源筛选菜单外壳规则")
+        self.assertTrue(
+            any(
+                "rgba(var(--v-theme-surface), calc(0.54" in body
+                and "blur(14px) saturate(1.08)" in body
+                and "border-color:" in body
+                and "box-shadow:" in body
+                for body in default_bodies
+            ),
+            "来源菜单外壳默认应复用 surface_strong 玻璃表面并承担 blur(14px)",
+        )
+        max_bodies = _rules_bodies(
+            _css({"stats_card_blur": 40}), ".v-menu .provider-source-menu"
+        )
+        self.assertTrue(
+            any("blur(40px) saturate(1.08)" in body for body in max_bodies),
+            "stats_card_blur=40 时来源菜单外壳应输出 blur(40px)",
+        )
+
+    def test_source_menu_shell_zero_blur_stays_transparent(self) -> None:
+        bodies = _rules_bodies(
+            _css({"stats_card_blur": 0, "surface_opacity": 1}),
+            ".v-menu .provider-source-menu",
+        )
+        self.assertTrue(bodies, "未找到来源筛选菜单外壳规则")
+        self.assertTrue(
+            any(
+                "background: transparent !important;" in body
+                and "border-color: transparent !important;" in body
+                and "box-shadow: none !important;" in body
+                and "backdrop-filter: none !important;" in body
+                and "-webkit-backdrop-filter: none !important;" in body
+                and "blur(" not in body
+                for body in bodies
+            ),
+            "stats_card_blur=0 时来源菜单外壳必须透明关闭，"
+            "不被 surface_opacity 染实",
+        )
+
+    def test_source_menu_mounted_as_independent_overlay(self) -> None:
+        css = _css()
+        self.assertIn(
+            "html.astrbot-palette-active .v-overlay-container "
+            ".v-menu .provider-source-menu {",
+            css,
+            "来源菜单应按独立挂载的 overlay 匹配",
+        )
+        self.assertNotIn(
+            ".provider-menu-card .provider-source-menu",
+            css,
+            "来源菜单不是主模型卡片的后代，不得写成嵌套选择器",
+        )
+        self.assertNotIn(
+            "#app .v-main .provider-source-menu",
+            css,
+            "来源菜单规则不得依赖 #app .v-main 祖先",
+        )
+
+    def test_source_menu_inner_list_transparent(self) -> None:
+        css = _css()
+        bodies = _rules_bodies(css, ".provider-source-menu .v-list")
+        self.assertTrue(bodies, "未找到来源菜单内部列表规则")
+        self.assertTrue(
+            any(
+                "background: transparent !important;" in body
+                and "background-color: transparent !important;" in body
+                and "backdrop-filter: none !important;" in body
+                and "-webkit-backdrop-filter: none !important;" in body
+                and "blur(" not in body
+                for body in bodies
+            ),
+            "来源菜单内部 v-list 应透明且无独立模糊",
+        )
+        self.assertNotIn(
+            ".provider-source-menu .v-list-item",
+            css,
+            "列表项 active/hover 交互态保留原生，不新增覆盖",
+        )
+
+    def test_source_header_inner_surface_without_filter(self) -> None:
+        bodies = _rules_bodies(_css(), ".provider-menu-card .provider-source-header")
+        self.assertTrue(bodies, "未找到来源分组吸顶标题规则")
+        self.assertTrue(
+            any(
+                "rgba(var(--v-theme-surface), calc(0.30" in body
+                and "backdrop-filter: none !important;" in body
+                and "-webkit-backdrop-filter: none !important;" in body
+                and "blur(" not in body
+                for body in bodies
+            ),
+            "吸顶标题应复用内层半透明表面并显式关闭滤镜",
+        )
+
+    def test_source_header_zero_blur_transparent(self) -> None:
+        bodies = _rules_bodies(
+            _css({"stats_card_blur": 0, "surface_opacity": 1}),
+            ".provider-menu-card .provider-source-header",
+        )
+        self.assertTrue(bodies, "未找到来源分组吸顶标题规则")
+        self.assertTrue(
+            any(
+                "background: transparent !important;" in body
+                and "background-color: transparent !important;" in body
+                for body in bodies
+            ),
+            "stats_card_blur=0 时吸顶标题应透明，不被 surface_opacity 染实",
+        )
+
+    def test_source_header_keeps_virtual_list_geometry(self) -> None:
+        bodies = _rules_bodies(_css(), ".provider-menu-card .provider-source-header")
+        self.assertTrue(bodies, "未找到来源分组吸顶标题规则")
+        for body in bodies:
+            for forbidden in (
+                "height",
+                "min-height",
+                "padding",
+                "margin",
+                "position",
+                "top:",
+                "z-index",
+                "overflow",
+                "transform",
+            ):
+                self.assertNotIn(
+                    forbidden,
+                    body,
+                    f"吸顶标题规则不得覆盖几何/定位属性 {forbidden}"
+                    "（虚拟列表依赖原生 32px 高度与 sticky 定位）",
+                )
+
+    def test_source_card_transparent_without_filter(self) -> None:
+        bodies = _rules_bodies(_css(), ".source-dialog .source-card")
+        self.assertTrue(bodies, "未找到来源卡片规则")
+        self.assertTrue(
+            any(
+                "background: transparent !important;" in body
+                and "background-color: transparent !important;" in body
+                and "box-shadow: none !important;" in body
+                and "backdrop-filter: none !important;" in body
+                and "-webkit-backdrop-filter: none !important;" in body
+                and "blur(" not in body
+                for body in bodies
+            ),
+            "来源卡片普通态应透明、沿用主题边框且无新增滤镜/阴影",
+        )
+
+    def test_source_card_hover_state_preserved(self) -> None:
+        for config in ({}, {"stats_card_blur": 0, "surface_opacity": 1}):
+            css = _css(config)
+            hover = _rules_bodies(css, ".source-dialog .source-card:hover")
+            self.assertTrue(hover, f"未找到来源卡片 hover 规则: {config}")
+            self.assertTrue(
+                any(
+                    "background: rgba(var(--v-theme-on-surface), 0.045)"
+                    " !important;" in body
+                    and "background-color: rgba(var(--v-theme-on-surface), 0.045)"
+                    " !important;" in body
+                    and "border-color: rgba(var(--v-theme-on-surface), 0.2)"
+                    " !important;" in body
+                    for body in hover
+                ),
+                f"hover 应补回原生 0.045 底色与 0.2 边框: {config}",
+            )
+            self.assertGreater(
+                css.index(".source-dialog .source-card:hover"),
+                css.index(".source-dialog .source-card {"),
+                f"hover 规则必须位于普通态规则之后: {config}",
+            )
+
+    def test_source_card_interaction_layer_untouched(self) -> None:
+        css = _css()
+        self.assertEqual(
+            css.count(".source-card"),
+            2,
+            "来源卡片只允许普通态与 hover 两条规则",
+        )
+        for forbidden in (".source-card__select", ".source-card__link"):
+            self.assertNotIn(
+                forbidden,
+                css,
+                f"不得接管点击层或链接行为: {forbidden}",
+            )
+
+
 class CssIntegrityTest(unittest.TestCase):
     def test_braces_are_balanced(self) -> None:
         for config in (
