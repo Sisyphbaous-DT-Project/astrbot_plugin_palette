@@ -44,6 +44,30 @@ def _media_block(css: str, media_query: str) -> str:
     return css[start:]
 
 
+def _rule_index(css: str, selector_part: str, body_marker: str | None = None) -> int:
+    """返回首个「选择器包含 selector_part 且 body 含 body_marker」的规则起点。
+
+    找不到返回 -1；调用方必须先断言 >= 0 再参与先后比较，避免假通过。
+    selector_part 应写全作用域前缀，防止子串误中其他规则。
+    """
+    for match in re.finditer(r"([^{}]+)\{([^{}]*)\}", css):
+        selectors, body = match.group(1), match.group(2)
+        if body_marker is not None and body_marker not in body:
+            continue
+        if any(selector_part in part for part in selectors.split(",")):
+            return match.start()
+    return -1
+
+
+def _rules_bodies_containing(css: str, selector_part: str) -> list[str]:
+    """选择器包含给定片段的规则体（锁行为，不锁 :not 链等具体写法）。"""
+    bodies = []
+    for match in re.finditer(r"([^{}]+)\{([^{}]*)\}", css):
+        if any(selector_part in part for part in match.group(1).split(",")):
+            bodies.append(match.group(2))
+    return bodies
+
+
 class StatsCardBlurTest(unittest.TestCase):
     def test_blur_default_value_renders(self) -> None:
         self.assertIn("blur(14px) saturate(1.08)", _css({"stats_card_blur": 14}))
@@ -491,19 +515,31 @@ class AstrBot428SurfaceTest(unittest.TestCase):
             any("background: transparent !important;" in body for body in bodies)
         )
 
+    # 分组卡片规则是否压过 _surface_css 全局 v-card 复位，不在此处用
+    # 自制特异度算法断言，由浏览器 getComputedStyle 验收兜底。
+
     def test_new_glass_carriers_blur_by_default(self) -> None:
         css = _css()
         for selector in (
             ".conversation-workspace .workspace-card",
             ".platform-page .platform-workbench",
             ".unsaved-changes-pill",
-            ".config-panel .config-standard-section__groups .v-card",
         ):
             bodies = _rules_bodies(css, selector)
             self.assertTrue(bodies, f"未找到以 {selector} 结尾的规则")
             self.assertTrue(
                 any("blur(14px)" in body for body in bodies),
                 f"{selector} 默认应带玻璃模糊",
+            )
+        for group_part in (
+            ".config-panel .config-standard-section__groups .v-card",
+            ".config-panel .config-product-groups .v-card",
+        ):
+            bodies = _rules_bodies_containing(css, group_part)
+            self.assertTrue(bodies, f"未找到作用域含 {group_part} 的规则")
+            self.assertTrue(
+                any("blur(14px)" in body for body in bodies),
+                f"{group_part} 默认应带玻璃模糊",
             )
 
     def test_new_glass_carriers_respect_zero_blur(self) -> None:
@@ -519,6 +555,14 @@ class AstrBot428SurfaceTest(unittest.TestCase):
                 any("backdrop-filter: none !important;" in body for body in bodies),
                 f"{selector} 在 stats_card_blur=0 时必须输出 none",
             )
+        bodies = _rules_bodies_containing(
+            css, ".config-panel .config-product-groups .v-card"
+        )
+        self.assertTrue(bodies, "未找到 product 分组卡片的规则")
+        self.assertTrue(
+            any("backdrop-filter: none !important;" in body for body in bodies),
+            "product 分组卡片在 stats_card_blur=0 时必须输出 none",
+        )
 
     def test_new_inner_surfaces_disable_filter(self) -> None:
         css = _css()
@@ -539,16 +583,24 @@ class AstrBot428SurfaceTest(unittest.TestCase):
                 f".platform-page 缺少 {variable} 接管",
             )
 
-    def test_config_toolbar_sticky_backdrop_follows_opacity(self) -> None:
-        bodies = _rules_bodies(_css(), ".config-toolbar-sticky::before")
-        self.assertTrue(bodies, "未找到粘性工具栏背景条规则")
-        self.assertTrue(
-            any(
-                "rgba(var(--v-theme-containerBg)" in body and "blur(14px)" in body
-                for body in bodies
-            ),
-            "粘性工具栏背景条应跟随透明度并玻璃化",
-        )
+    def test_config_toolbar_scrolls_without_backplate_at_every_blur(self) -> None:
+        for blur in (0, 14, 40):
+            with self.subTest(blur=blur):
+                css = _css({"stats_card_blur": blur})
+                bodies = _rules_bodies(css, ".config-toolbar-sticky::before")
+                self.assertTrue(bodies)
+                for declaration in (
+                    "content: none !important;",
+                    "display: none !important;",
+                    "background: transparent !important;",
+                    "backdrop-filter: none !important;",
+                    "-webkit-backdrop-filter: none !important;",
+                    "pointer-events: none !important;",
+                ):
+                    self.assertIn(declaration, bodies[-1])
+                toolbar = _rules_bodies(css, ".config-panel .config-toolbar-sticky")
+                self.assertTrue(toolbar)
+                self.assertIn("position: static !important;", toolbar[-1])
 
     def test_config_workspace_border_variables_taken_over(self) -> None:
         bodies = _rules_bodies(_css(), ".config-panel .config-workspace")
@@ -566,6 +618,259 @@ class AstrBot428SurfaceTest(unittest.TestCase):
             any("box-shadow: none !important;" in body for body in bodies),
             "配置方案菜单应去除原生阴影",
         )
+
+
+class ConfigPageGlassLayerTest(unittest.TestCase):
+    """4.28 配置页分组卡片内层装饰清零的回归测试。
+
+    分组卡片（config-standard-section__groups / config-product-groups
+    > v-card，后者即 AI 配置「模型」区域）是 4.28 唯一的分组玻璃载体，
+    其内部 config-section/config-row 必须回到原生透明形态；这两个祖先类
+    仅 4.28 存在，4.26/4.27 的旧版壳规则必须原样保留。
+    """
+
+    SCOPES = (
+        ".config-panel .config-standard-section__groups",
+        ".config-panel .config-product-groups",
+    )
+
+    def test_section_and_row_cleared_inside_group_cards(self) -> None:
+        for blur in (0, 14):
+            css = _css({"stats_card_blur": blur})
+            for scope in self.SCOPES:
+                for suffix in (
+                    f"{scope} .config-section",
+                    f"{scope} .config-row",
+                ):
+                    bodies = _rules_bodies(css, suffix)
+                    self.assertTrue(bodies, f"未找到以 {suffix} 结尾的规则")
+                    self.assertTrue(
+                        any(
+                            "background: transparent !important;" in body
+                            and "border: 0 !important;" in body
+                            and "box-shadow: none !important;" in body
+                            and "backdrop-filter: none !important;" in body
+                            and "-webkit-backdrop-filter: none !important;" in body
+                            for body in bodies
+                        ),
+                        f"stats_card_blur={blur} 时 {suffix} 应清零玻璃装饰",
+                    )
+
+    def test_group_overrides_come_after_legacy_shells(self) -> None:
+        css = _css()
+        prefix = "html.astrbot-palette-active #app .v-main .config-panel"
+        legacy_section = _rule_index(
+            css, f"{prefix} .config-section", "border-radius: 18px"
+        )
+        legacy_row = _rule_index(css, f"{prefix} .config-row", "border-radius: 14px")
+        self.assertGreaterEqual(legacy_section, 0, "未找到旧版 section 壳规则")
+        self.assertGreaterEqual(legacy_row, 0, "未找到旧版 row 壳规则")
+        for scope in self.SCOPES:
+            # scope 形如 ".config-panel .config-standard-section__groups"
+            full_scope = f"html.astrbot-palette-active #app .v-main {scope}"
+            section_override = _rule_index(css, f"{full_scope} .config-section")
+            row_override = _rule_index(css, f"{full_scope} .config-row")
+            self.assertGreaterEqual(
+                section_override, 0, f"未找到 {scope} 的 section 清零规则"
+            )
+            self.assertGreaterEqual(row_override, 0, f"未找到 {scope} 的 row 清零规则")
+            self.assertLess(
+                legacy_section,
+                section_override,
+                f"{scope} 内 section 清零规则必须晚于旧版 section 壳规则",
+            )
+            self.assertLess(
+                legacy_row,
+                row_override,
+                f"{scope} 内 row 清零规则必须晚于旧版 row 壳规则",
+            )
+
+    def test_group_row_hover_clears_decoration(self) -> None:
+        css = _css()
+        for scope in self.SCOPES:
+            hover_suffix = f"{scope} .config-row:hover"
+            bodies = _rules_bodies(css, hover_suffix)
+            self.assertTrue(bodies, f"未找到以 {hover_suffix} 结尾的规则")
+            self.assertTrue(
+                any(
+                    "background: transparent !important;" in body
+                    and "box-shadow: none !important;" in body
+                    and "transform: none !important;" in body
+                    for body in bodies
+                ),
+                "分组卡片内 row 悬停应回到原生透明形态",
+            )
+            self.assertLess(
+                css.index(".config-panel .config-row:hover,"),
+                css.index(hover_suffix),
+                "分组卡片内 row 悬停清零必须晚于旧版悬停装饰组",
+            )
+
+    def test_legacy_config_shell_rules_kept(self) -> None:
+        css = _css()
+        section_bodies = _rules_bodies(css, ".config-panel .config-section")
+        row_bodies = _rules_bodies(css, ".config-panel .config-row")
+        self.assertTrue(
+            any(
+                "border-radius: 18px !important;" in body for body in section_bodies
+            ),
+            "4.26/4.27 兼容的 section 壳规则不得删除",
+        )
+        self.assertTrue(
+            any("border-radius: 14px !important;" in body for body in row_bodies),
+            "4.26/4.27 兼容的 row 壳规则不得删除",
+        )
+
+
+class ConfigToolbarSeparatorTest(unittest.TestCase):
+    """配置工具栏分隔线收窄：原生为 100vw 通栏，必须收进面板。"""
+
+    def test_separator_clamped_to_panel(self) -> None:
+        for blur in (0, 14):
+            css = _css({"stats_card_blur": blur})
+            bodies = _rules_bodies(css, ".config-panel .config-toolbar-separator")
+            self.assertTrue(bodies, "未找到配置工具栏分隔线收窄规则")
+            self.assertTrue(
+                any(
+                    "width: auto !important;" in body
+                    and "margin-left: 0 !important;" in body
+                    and "transform: none !important;" in body
+                    for body in bodies
+                ),
+                f"stats_card_blur={blur} 时分隔线应收窄到面板内",
+            )
+            for body in bodies:
+                self.assertNotIn("100vw", body)
+
+    def test_separator_rule_scoped_to_config_panel(self) -> None:
+        # 全局 .v-divider 染色规则保留，但分隔线收窄只允许作用于配置面板
+        css = _css()
+        for match in re.finditer(r"([^{}]+)\{([^{}]*)\}", css):
+            selectors = match.group(1)
+            if "config-toolbar-separator" in selectors:
+                self.assertIn(".config-panel", selectors)
+
+
+class DashboardFrameSurfaceTest(unittest.TestCase):
+    """外框统一铺底，不污染 Chat、浮层侧栏或 fixed 元素的定位。"""
+
+    APP = (
+        "html.astrbot-palette-active #app .v-application"
+        ":has(> .v-application__wrap > .top-header:not(.chat-mode-header))"
+    )
+    LAYOUT = f"{APP} > .v-application__wrap"
+
+    def test_shared_surface_tracks_opacity_without_changing_layout(self) -> None:
+        for opacity in (0, 0.4, 1):
+            css = _css({"surface_opacity": opacity})
+            bodies = _rules_bodies(css, self.APP)
+            self.assertEqual(len(bodies), 1)
+            self.assertIn(
+                "background: rgba(var(--v-theme-surface), "
+                "var(--astrbot-palette-surface-opacity, 0)) !important;",
+                bodies[0],
+            )
+            for declaration in ("position:", "filter:", "transform:", "contain:", "opacity:"):
+                self.assertNotIn(declaration, bodies[0])
+
+    def test_config_scroll_area_preserves_header_and_fixed_buttons(self) -> None:
+        css = _css()
+        main = (
+            f"{self.LAYOUT} > .v-main"
+            ":has(> .page-wrapper > div > .config-page-shell > .config-panel > .config-toolbar-sticky)"
+        )
+        bodies = _rules_bodies(css, main)
+        self.assertEqual(len(bodies), 1)
+        self.assertIn("height: 100dvh !important;", bodies[0])
+        self.assertIn("overflow: hidden !important;", bodies[0])
+        wrapper = _rules_bodies(css, f"{main} > .page-wrapper")
+        self.assertEqual(len(wrapper), 1)
+        self.assertIn("overflow-y: auto !important;", wrapper[0])
+        for body in bodies + wrapper:
+            for forbidden in ("filter:", "transform:", "contain:", "position:"):
+                self.assertNotIn(forbidden, body)
+        nav = _rules_bodies(
+            _media_block(css, "@media (min-width: 721px)"),
+            f"{main} .config-workspace__nav",
+        )
+        self.assertEqual(len(nav), 1)
+        self.assertIn("top: 16px !important;", nav[0])
+
+    def test_inner_frame_transparent_but_temporary_drawer_keeps_glass(self) -> None:
+        css = _css({"surface_opacity": 0.4})
+        for suffix in (
+            ".v-main > .page-wrapper",
+            ".leftSidebar:not(.v-navigation-drawer--temporary)",
+            ".leftSidebar .v-list",
+        ):
+            bodies = _rules_bodies(css, f"{self.LAYOUT} > {suffix}")
+            self.assertTrue(bodies, suffix)
+            self.assertTrue(any("background: transparent !important;" in b for b in bodies))
+        drawer = _rules_bodies(css, ".v-navigation-drawer.v-navigation-drawer--temporary")
+        self.assertTrue(any("blur(18px)" in body for body in drawer))
+        for match in re.finditer(r"([^{}]+)\{([^{}]*)\}", css):
+            if self.APP not in match.group(1):
+                continue
+            for selector in match.group(1).split(","):
+                if "leftSidebar" in selector and not selector.strip().endswith(".v-list"):
+                    self.assertIn(":not(.v-navigation-drawer--temporary)", selector)
+
+
+class TopHeaderButtonsTest(unittest.TestCase):
+    """Bot 模式应用顶栏图标按钮统一：默认透明、40×40、10px 圆角。
+
+    只接管 .top-header 且非 .chat-mode-header；chat 模式布局不同不动。
+    「是否压过 _surface_css 的常驻底色规则」由浏览器 getComputedStyle
+    验收兜底，这里只断言行为声明存在。
+    """
+
+    SCOPE = ".v-app-bar.top-header:not(.chat-mode-header) .v-btn--icon"
+
+    def test_bot_header_icon_buttons_transparent_by_default(self) -> None:
+        bodies = _rules_bodies_containing(_css(), self.SCOPE)
+        self.assertTrue(bodies, "未找到顶栏图标按钮统一规则")
+        self.assertTrue(
+            any(
+                "background: transparent !important;" in body
+                and "background-color: transparent !important;" in body
+                and "width: 40px !important;" in body
+                and "height: 40px !important;" in body
+                and "border-radius: 10px !important;" in body
+                for body in bodies
+            ),
+            "顶栏图标按钮应默认透明且统一 40×40、10px 圆角",
+        )
+        for body in bodies:
+            self.assertNotIn("backdrop-filter", body, "顶栏按钮不得叠加毛玻璃")
+
+    def test_bot_header_icon_buttons_interaction_feedback(self) -> None:
+        css = _css()
+        for state in (":hover", ":focus-visible", '[aria-expanded="true"]'):
+            # 选择器在 SCOPE 与状态伪类之间可能夹 :not 链，拆开分别匹配
+            bodies = [
+                match.group(2)
+                for match in re.finditer(r"([^{}]+)\{([^{}]*)\}", css)
+                if any(
+                    self.SCOPE in part and state in part
+                    for part in match.group(1).split(",")
+                )
+            ]
+            self.assertTrue(bodies, f"未找到顶栏按钮 {state} 态规则")
+            self.assertTrue(
+                any(
+                    "rgba(var(--v-theme-on-surface), 0.08)" in body
+                    for body in bodies
+                ),
+                f"顶栏按钮 {state} 态应有 on-surface 0.08 轻底色",
+            )
+
+    def test_chat_mode_header_not_covered(self) -> None:
+        # 所有新增顶栏按钮规则都必须排除 chat 模式
+        css = _css()
+        for match in re.finditer(r"([^{}]+)\{([^{}]*)\}", css):
+            selectors = match.group(1)
+            if "top-header" in selectors and ".v-btn--icon" in selectors:
+                self.assertIn(":not(.chat-mode-header)", selectors)
 
 
 class AstrBot428TransparencyDetailTest(unittest.TestCase):

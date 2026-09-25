@@ -3,6 +3,8 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from .chat_theme import build_chat_theme_css
+
 _ADVANCED_CSS_BLOCKED_AT_RULE = re.compile(r"@import\b", re.IGNORECASE)
 _EXTERNAL_URL = re.compile(r"url\(\s*(['\"]?)(https?:|//)", re.IGNORECASE)
 
@@ -69,7 +71,7 @@ def build_theme_css(config: dict[str, Any]) -> str:
 
     return "\n".join(
         [
-            "/* AstrBot调色盘 0.4.18 运行时主题 CSS */",
+            "/* AstrBot调色盘 0.4.19 运行时主题 CSS */",
             ":root {",
             f"  --astrbot-palette-enabled: {enabled};",
             "  --astrbot-palette-background-image: none;",
@@ -200,6 +202,8 @@ def build_theme_css(config: dict[str, Any]) -> str:
             _extension_loading_dialog_css(),
             "",
             _astrbot_update_dialog_surface_css(),
+            "",
+            build_chat_theme_css(),
             "",
             _readability_css(text_effect, icon_effect),
             "",
@@ -342,6 +346,31 @@ def _top_header_css() -> str:
             "  border-bottom: 0 !important;",
             "  box-shadow: none !important;",
             "  outline: 0 !important;",
+            "}",
+            "",
+            # Bot/Dashboard 模式顶栏（.top-header 且非 .chat-mode-header）的
+            # 图标按钮统一为 40×40、10px 圆角、默认透明：_surface_css 的
+            # .v-app-bar .v-btn--icon:not(...) 规则（特异度 (1,11,1)）会在
+            # surface_opacity>0 时给它们加常驻底色块，与透明的 Chat 切换按钮
+            # 视觉分裂。:not 链把特异度抬到 (1,12,1) 压过它；chat 模式顶栏
+            # 布局不同（.chat-mode-header），不接管。
+            "html.astrbot-palette-active #app .v-app-bar.top-header:not(.chat-mode-header) .v-btn--icon:not(.bg-primary):not(.bg-secondary):not(.bg-success):not(.bg-warning):not(.bg-error):not(.bg-info):not(.bg-darkprimary) {",
+            "  background: transparent !important;",
+            "  background-color: transparent !important;",
+            "  box-shadow: none !important;",
+            "  width: 40px !important;",
+            "  height: 40px !important;",
+            "  min-width: 40px !important;",
+            "  border-radius: 10px !important;",
+            "}",
+            "",
+            # 悬停/键盘聚焦/菜单展开时补轻底色反馈（固定交互色，
+            # 不随毛玻璃开关或 surface_opacity 变化）。
+            "html.astrbot-palette-active #app .v-app-bar.top-header:not(.chat-mode-header) .v-btn--icon:not(.bg-primary):not(.bg-secondary):not(.bg-success):not(.bg-warning):not(.bg-error):not(.bg-info):not(.bg-darkprimary):hover,",
+            "html.astrbot-palette-active #app .v-app-bar.top-header:not(.chat-mode-header) .v-btn--icon:not(.bg-primary):not(.bg-secondary):not(.bg-success):not(.bg-warning):not(.bg-error):not(.bg-info):not(.bg-darkprimary):focus-visible,",
+            "html.astrbot-palette-active #app .v-app-bar.top-header:not(.chat-mode-header) .v-btn--icon:not(.bg-primary):not(.bg-secondary):not(.bg-success):not(.bg-warning):not(.bg-error):not(.bg-info):not(.bg-darkprimary)[aria-expanded=\"true\"] {",
+            "  background: rgba(var(--v-theme-on-surface), 0.08) !important;",
+            "  background-color: rgba(var(--v-theme-on-surface), 0.08) !important;",
             "}",
         ]
     )
@@ -488,8 +517,9 @@ def _surface_css(stats_card_blur: int) -> str:
             f"  background: {container} !important;",
             "}",
             "",
-            "html.astrbot-palette-active #app .v-app-bar .v-btn--icon:not(.bg-primary):not(.bg-secondary):not(.bg-success):not(.bg-warning):not(.bg-error):not(.bg-info):not(.bg-darkprimary),",
-            "html.astrbot-palette-active #app .v-navigation-drawer .v-btn:not(.bg-primary):not(.bg-secondary):not(.bg-success):not(.bg-warning):not(.bg-error):not(.bg-info):not(.bg-darkprimary),",
+            # Chat 的文字/图标按钮由原生状态和专用规则控制，避免常驻底块。
+            "html.astrbot-palette-active #app .v-app-bar:not(.chat-mode-header) .v-btn--icon:not(.bg-primary):not(.bg-secondary):not(.bg-success):not(.bg-warning):not(.bg-error):not(.bg-info):not(.bg-darkprimary),",
+            "html.astrbot-palette-active #app .v-navigation-drawer:not(.chat-sidebar) .v-btn:not(.bg-primary):not(.bg-secondary):not(.bg-success):not(.bg-warning):not(.bg-error):not(.bg-info):not(.bg-darkprimary),",
             "html.astrbot-palette-active #app .v-main .v-list-item--active,",
             "html.astrbot-palette-active #app .v-navigation-drawer .v-list-item--active {",
             f"  background-color: {hover} !important;",
@@ -604,6 +634,17 @@ def _readability_css(text_effect: str, icon_effect: str) -> str:
 
 def _dashboard_shell_css() -> str:
     surface = "rgba(var(--v-theme-surface), var(--astrbot-palette-surface-opacity, 0))"
+    # 由 Bot 布局的共同祖先铺一次底色，避免顶栏、侧栏和正文各自叠色。
+    # 正向限定当前顶栏模式，防止切到 Chat 后保留的隐藏组件触发此规则。
+    bot_app = (
+        "html.astrbot-palette-active #app .v-application"
+        ":has(> .v-application__wrap > .top-header:not(.chat-mode-header))"
+    )
+    bot_layout = f"{bot_app} > .v-application__wrap"
+    config_main = (
+        f"{bot_layout} > .v-main"
+        ":has(> .page-wrapper > div > .config-page-shell > .config-panel > .config-toolbar-sticky)"
+    )
     primary_soft = (
         "rgba(var(--v-theme-primary), "
         "calc(var(--astrbot-palette-surface-opacity, 0) * 0.14))"
@@ -618,6 +659,43 @@ def _dashboard_shell_css() -> str:
     )
     return "\n".join(
         [
+            f"{bot_app} {{",
+            f"  background: {surface} !important;",
+            "}",
+            "",
+            # 只去掉外框的重复涂层，不改布局或滤镜，保留 fixed 元素的包含块。
+            # temporary 侧栏本体仍由独立毛玻璃规则负责；内部列表无需重复染色。
+            f"{bot_layout} > .v-main > .page-wrapper,",
+            f"{bot_layout} > .leftSidebar:not(.v-navigation-drawer--temporary),",
+            f"{bot_layout} > .leftSidebar .v-list {{",
+            "  background: transparent !important;",
+            "  background-color: transparent !important;",
+            "}",
+            "",
+            f"{bot_layout} > .leftSidebar:not(.v-navigation-drawer--temporary) {{",
+            "  border-color: transparent !important;",
+            "}",
+            "",
+            # 4.28 配置正文在应用顶栏下方滚动，避免透明顶栏背后穿过正文。
+            # 仅改变滚动容器，不添加 filter/transform/contain，浮动按钮仍固定于视口。
+            f"{config_main} {{",
+            "  height: 100dvh !important;",
+            "  overflow: hidden !important;",
+            "}",
+            "",
+            f"{config_main} > .page-wrapper {{",
+            "  height: 100% !important;",
+            "  min-height: 0 !important;",
+            "  overflow-y: auto !important;",
+            "}",
+            "",
+            # 新滚动容器已经扣除应用顶栏，导航无需再为两层吸顶栏预留偏移。
+            "@media (min-width: 721px) {",
+            f"  {config_main} .config-workspace__nav {{",
+            "    top: 16px !important;",
+            "  }",
+            "}",
+            "",
             "html.astrbot-palette-active #app .v-main .dashboard-page {",
             "  --dashboard-bg: transparent;",
             f"  --dashboard-surface: {surface};",
@@ -980,7 +1058,11 @@ def _stats_highlight_css(stats_card_blur: int) -> str:
             "html.astrbot-palette-active #app .v-main .config-panel .v-window,",
             "html.astrbot-palette-active #app .v-main .config-panel .v-window-item,",
             "html.astrbot-palette-active #app .v-main .config-panel .v-field,",
-            "html.astrbot-palette-active #app .v-main .config-panel .config-standard-section__groups .v-card,",
+            # 分组卡片选择器带 :not 链抬高特异度：_surface_css 的全局
+            # .v-main .v-card:not(...) 复位规则特异度为 (1,10,1)，不带 :not
+            # 的分组卡片规则 (1,5,1) 会被它压住而无法生效。
+            "html.astrbot-palette-active #app .v-main .config-panel .config-standard-section__groups .v-card:not(.bg-primary):not(.bg-secondary):not(.bg-success):not(.bg-warning):not(.bg-error):not(.bg-info),",
+            "html.astrbot-palette-active #app .v-main .config-panel .config-product-groups .v-card:not(.bg-primary):not(.bg-secondary):not(.bg-success):not(.bg-warning):not(.bg-error):not(.bg-info),",
             "html.astrbot-palette-active #app .v-main .config-panel .ai-disabled-state,",
             "html.astrbot-palette-active #app .v-main .unsaved-changes-pill,",
             "html.astrbot-palette-active #app .v-main .conversation-workspace .workspace-card,",
@@ -1017,7 +1099,8 @@ def _stats_highlight_css(stats_card_blur: int) -> str:
             "html.astrbot-palette-active #app .v-main .plugin-detail-page .plugin-summary-card,",
             "html.astrbot-palette-active #app .v-main .plugin-detail-page .handler-card,",
             "html.astrbot-palette-active #app .v-main .plugin-detail-page .docs-card,",
-            "html.astrbot-palette-active #app .v-main .config-panel .config-standard-section__groups .v-card,",
+            "html.astrbot-palette-active #app .v-main .config-panel .config-standard-section__groups .v-card:not(.bg-primary):not(.bg-secondary):not(.bg-success):not(.bg-warning):not(.bg-error):not(.bg-info),",
+            "html.astrbot-palette-active #app .v-main .config-panel .config-product-groups .v-card:not(.bg-primary):not(.bg-secondary):not(.bg-success):not(.bg-warning):not(.bg-error):not(.bg-info),",
             "html.astrbot-palette-active #app .v-main .unsaved-changes-pill,",
             "html.astrbot-palette-active #app .v-main .conversation-workspace .workspace-card,",
             "html.astrbot-palette-active #app .v-main .platform-page .platform-workbench,",
@@ -1247,11 +1330,31 @@ def _stats_highlight_css(stats_card_blur: int) -> str:
             "  border-color: rgba(var(--v-theme-on-surface), 0.2) !important;",
             "}",
             "",
-            # 4.28 配置页粘性工具栏的通栏背景条：原生是 containerBg 实色，
-            # 吸顶时会挡住壁纸，改为跟随透明度的玻璃条。
+            # 4.28 工具栏统一随正文滚动：吸顶透明会叠字，浓底遮挡又形成黑条。
+            # 改为 static 时必须同时禁用原生 absolute 伪元素，否则其包含块
+            # 转移到 panel 后会覆盖整个面板并拦截点击。
             "html.astrbot-palette-active #app .v-main .config-panel .config-toolbar-sticky::before {",
-            "  background: rgba(var(--v-theme-containerBg), var(--astrbot-palette-surface-opacity, 0)) !important;",
-            *_backdrop_filter_lines(blur),
+            "  content: none !important;",
+            "  display: none !important;",
+            "  background: transparent !important;",
+            "  background-color: transparent !important;",
+            "  backdrop-filter: none !important;",
+            "  -webkit-backdrop-filter: none !important;",
+            "  pointer-events: none !important;",
+            "}",
+            "",
+            "html.astrbot-palette-active #app .v-main .config-panel .config-toolbar-sticky {",
+            "  position: static !important;",
+            "}",
+            "",
+            # 原生工具栏分隔线是 100vw 通栏（width + margin-left:50% +
+            # translateX(-50%)），surface_opacity>0 时全局 .v-divider 染色
+            # 会让它伸出面板形成横向割裂；收窄到工具栏内容宽。内部
+            # .config-loading 进度条为 absolute inset 0，随容器收窄。
+            "html.astrbot-palette-active #app .v-main .config-panel .config-toolbar-separator {",
+            "  width: auto !important;",
+            "  margin-left: 0 !important;",
+            "  transform: none !important;",
             "}",
             "",
             # 4.28 配置工作区的边框变量接管，与全局玻璃边框保持一致。
@@ -1424,6 +1527,48 @@ def _stats_highlight_css(stats_card_blur: int) -> str:
             "html.astrbot-palette-active #app .v-main .stats-page .stat-card:hover {",
             f"  box-shadow: {hover_shadow} !important;",
             f"  transform: {hover_transform};",
+            "}",
+            "",
+            # AstrBot 4.28 的分组卡片（config-standard-section__groups /
+            # config-product-groups > v-card，后者即 AI 配置「模型」区域）
+            # 本身已是玻璃载体；其内部 config-section/config-row 在原生样式中
+            # 无背景无边框，旧版通用规则叠加的壳背景、边框和阴影会形成卡片套
+            # 卡片，这里在分组卡片作用域内清零装饰并复位几何，只保留原生交互
+            # 形态。这两个祖先类仅 4.28 存在，4.26/4.27（v-tabs-window 结构）
+            # 下空匹配，旧版层次不受影响。几何值取自 4.28 原生：section
+            # margin-bottom 4px + padding 16px 16px 8px；row margin 0。
+            "html.astrbot-palette-active #app .v-main .config-panel .config-standard-section__groups .config-section,",
+            "html.astrbot-palette-active #app .v-main .config-panel .config-product-groups .config-section {",
+            "  background: transparent !important;",
+            "  background-color: transparent !important;",
+            "  border: 0 !important;",
+            "  border-radius: 0 !important;",
+            "  box-shadow: none !important;",
+            "  backdrop-filter: none !important;",
+            "  -webkit-backdrop-filter: none !important;",
+            "  margin: 0 0 4px !important;",
+            "  padding: 16px 16px 8px !important;",
+            "}",
+            "",
+            "html.astrbot-palette-active #app .v-main .config-panel .config-standard-section__groups .config-row,",
+            "html.astrbot-palette-active #app .v-main .config-panel .config-product-groups .config-row {",
+            "  background: transparent !important;",
+            "  background-color: transparent !important;",
+            "  border: 0 !important;",
+            "  border-radius: 0 !important;",
+            "  box-shadow: none !important;",
+            "  backdrop-filter: none !important;",
+            "  -webkit-backdrop-filter: none !important;",
+            "  margin: 0 !important;",
+            "  overflow: visible !important;",
+            "}",
+            "",
+            "html.astrbot-palette-active #app .v-main .config-panel .config-standard-section__groups .config-row:hover,",
+            "html.astrbot-palette-active #app .v-main .config-panel .config-product-groups .config-row:hover {",
+            "  background: transparent !important;",
+            "  background-color: transparent !important;",
+            "  box-shadow: none !important;",
+            "  transform: none !important;",
             "}",
             "",
             "html.astrbot-palette-active #app .v-main .platform-page .item-card,",
