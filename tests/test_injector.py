@@ -551,6 +551,69 @@ class InjectorDashboardTargetTest(unittest.TestCase):
         )
 
 
+class InjectorEntryAssetQueryTest(unittest.TestCase):
+    """入口资源带缓存串时必须被剥掉，否则面板会白屏只剩壁纸。
+
+    真实故障：index.html 的入口是
+    `<script src="/assets/index-xxx.js?v=20260926">`，而 chunk 内部是
+    `import "./index-xxx.js"`（不带查询串），浏览器按 URL 区分模块 →
+    同一个主包被实例化两次 → 第二次实例里 Vue 的 router 注入丢失 →
+    FullLayout 中 `useRoute()` 返回 undefined、`setup` 读 `.path` 抛
+    `TypeError: Cannot read properties of undefined (reading 'path')` →
+    挂载失败，页面只剩调色盘的背景壁纸。
+    """
+
+    _INDEX_WITH_QUERY = (
+        "<!DOCTYPE html>\n<html>\n<head>\n<title>t</title>\n"
+        '    <script type="module" crossorigin '
+        'src="/assets/index-C9GVeu_v.js?v=20260926"></script>\n'
+        '    <link rel="stylesheet" crossorigin '
+        'href="/assets/index-CaFKs-WF.css?v=20260926">\n'
+        "  </head>\n<body></body>\n</html>\n"
+    )
+
+    def test_entry_asset_query_is_stripped(self) -> None:
+        """入口 src/href 上的查询串被剥掉，并回报被清理的 URL。"""
+
+        stripped, removed = injector._strip_entry_asset_query(self._INDEX_WITH_QUERY)
+        self.assertNotIn("?v=20260926", stripped)
+        self.assertIn('src="/assets/index-C9GVeu_v.js"', stripped)
+        self.assertIn('href="/assets/index-CaFKs-WF.css"', stripped)
+        self.assertEqual(
+            removed,
+            ["/assets/index-C9GVeu_v.js", "/assets/index-CaFKs-WF.css"],
+        )
+
+    def test_inject_strips_entry_asset_query(self) -> None:
+        """注入流程会顺带清理入口缓存串，同时正常写入注入块。"""
+
+        injected = injector._inject_content(self._INDEX_WITH_QUERY)
+        self.assertIn('src="/assets/index-C9GVeu_v.js"', injected)
+        self.assertIn('href="/assets/index-CaFKs-WF.css"', injected)
+        self.assertNotIn("?v=20260926", injected)
+        self.assertIn(INJECTION_START_MARKER, injected)
+        self.assertIn(INJECTION_END_MARKER, injected)
+
+    def test_inject_keeps_plugin_endpoint_cache_version(self) -> None:
+        """插件自身 `/api/...theme.css?v=<版本>` 属端点缓存版本，必须保留。"""
+
+        injected = injector._inject_content(_INDEX_HTML)
+        self.assertIn("theme.css?v=", injected)
+
+    def test_inject_is_idempotent_with_query(self) -> None:
+        """带查询串的入口清理后重复注入结果稳定（沿用既有缩进规整语义）。"""
+
+        contents = [self._INDEX_WITH_QUERY]
+        for _ in range(3):
+            contents.append(injector._inject_content(contents[-1]))
+        for content in contents[1:]:
+            self.assertNotIn("?v=20260926", content)
+            self.assertEqual(content.count(INJECTION_START_MARKER), 1)
+            self.assertEqual(content.count(INJECTION_END_MARKER), 1)
+        # 第一次沿用 </head> 原有缩进，第二次完成规整，之后收敛
+        self.assertEqual(contents[2], contents[3])
+
+
 _ENV_427 = '''
 _mod("astrbot.core.config.default", VERSION="4.27.1-fake")
 _mod("astrbot.core.dashboard_assets", resolve_dashboard_dist=lambda: None)

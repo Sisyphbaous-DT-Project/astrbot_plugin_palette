@@ -48,6 +48,38 @@ _FALLBACK_RESTART_MARKER = ".palette-restart-required"
 _PROCESS_START_TIME = time.time()
 
 
+# Dashboard 入口资源（Vite 产物，文件名已带内容哈希）不应带查询串：
+# 若 index.html 的入口 <script>/<link> 带 `?v=...`，而 chunk 内部是
+# `import "./index-XXXX.js"`（不带查询串），浏览器会把同一个模块当成两个 URL
+# 各加载一次，Vue 应用被实例化两次 → router 注入丢失 →
+# FullLayout 中 `useRoute()` 返回 undefined，`setup` 里读 `.path` 抛
+# `TypeError: Cannot read properties of undefined (reading 'path')`，
+# 挂载失败后面板白屏、只剩壁纸（调色盘的背景层仍在）。
+# 因此在写入前统一剥掉入口资源上的查询串，避免任何来源的缓存串把 WebUI 搞挂。
+_ENTRY_ASSET_QUERY_RE = re.compile(
+    r"(?P<attr>(?:src|href)\s*=\s*(?P<quote>[\"']))"
+    r"(?P<url>/assets/[^\"'?]+)"
+    r"\?[^\"']*(?P=quote)",
+    flags=re.IGNORECASE,
+)
+
+
+def _strip_entry_asset_query(content: str) -> tuple[str, list[str]]:
+    """剥掉 `/assets/` 入口资源上的查询串。
+
+    只处理 HTML 属性里的 `src=` / `href=`（不碰插件自身 `/api/...theme.css?v=...`
+    这类端点缓存版本），返回 (处理后的内容, 被清理的 URL 列表)。
+    """
+
+    removed: list[str] = []
+
+    def _replace(match: re.Match[str]) -> str:
+        removed.append(match.group("url"))
+        return f"{match.group('attr')}{match.group('url')}{match.group('quote')}"
+
+    return _ENTRY_ASSET_QUERY_RE.sub(_replace, content), removed
+
+
 @dataclass(frozen=True)
 class InjectionStatus:
     """描述当前 WebUI 运行时补丁状态。"""
@@ -240,6 +272,8 @@ def _inspect_target(target: DashboardTarget) -> InjectionStatus:
 
 
 def _inject_content(content: str) -> str:
+    # 先剥掉入口资源上的缓存串，避免同一模块被当成两个 URL 加载两次
+    content, _stripped = _strip_entry_asset_query(content)
     block = _build_injection_block()
     has_start = INJECTION_START_MARKER in content
     has_end = INJECTION_END_MARKER in content
