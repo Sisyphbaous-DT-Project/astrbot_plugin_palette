@@ -23,11 +23,7 @@ from PIL import Image, ImageOps, UnidentifiedImageError
 
 from .constants import (
     COVER_MAX_EDGE,
-    MAX_BACKGROUND_BYTES,
     MAX_COVER_SOURCE_BYTES,
-    MAX_SVG_BYTES,
-    MAX_VIDEO_BYTES,
-    MAX_UPLOAD_BYTES,
     MEDIA_BUNDLE_MAGIC,
     SVG_BACKGROUND_EXTENSIONS,
     VIDEO_BACKGROUND_EXTENSIONS,
@@ -120,26 +116,6 @@ def _looks_like_svg(content: bytes) -> bool:
     if text.startswith(("<?xml", "<!--")) and "<svg" in text:
         return True
     return False
-
-
-def upload_limit_for_suffix(suffix: str) -> int:
-    """按素材类型返回上传大小上限（字节）。"""
-
-    suffix = suffix.lower()
-    if suffix in VIDEO_BACKGROUND_EXTENSIONS:
-        return MAX_VIDEO_BYTES
-    if suffix in SVG_BACKGROUND_EXTENSIONS:
-        return MAX_SVG_BYTES
-    return MAX_BACKGROUND_BYTES
-
-
-def upload_limit_message(suffix: str) -> str:
-    suffix = suffix.lower()
-    if suffix in VIDEO_BACKGROUND_EXTENSIONS:
-        return "视频素材不能超过 100MiB。"
-    if suffix in SVG_BACKGROUND_EXTENSIONS:
-        return "SVG 素材不能超过 10MiB。"
-    return "图片素材不能超过 10MiB。"
 
 
 def sanitize_svg(content: bytes) -> bytes:
@@ -424,11 +400,6 @@ async def save_background_upload(upload, paths) -> str:
             parts.extend(chunk)
         return bytes(parts)
 
-    if (
-        getattr(upload, "content_length", None)
-        and upload.content_length > MAX_UPLOAD_BYTES
-    ):
-        raise ValueError("上传超过限制：图片/SVG 10MiB，视频 100MiB，封面 4MiB。")
     paths.ensure_runtime_dirs()
     background_id = uuid4().hex
     temp = paths.background_dir / f"background-{background_id}.upload.tmp"
@@ -462,15 +433,10 @@ async def save_background_upload(upload, paths) -> str:
                 if len(first_bytes) < 4096:
                     first_bytes += chunk[: 4096 - len(first_bytes)]
                 suffix = suffix or detect_background_suffix(first_bytes)
-                limit = upload_limit_for_suffix(suffix) if suffix else MAX_VIDEO_BYTES
-                if total_size > limit:
-                    raise ValueError(upload_limit_message(suffix or ".mp4"))
                 await asyncio.to_thread(output.write, chunk)
         suffix = suffix or detect_background_suffix(first_bytes)
         if not suffix or not total_size:
             raise ValueError("素材内容为空或格式不支持；支持图片、MP4、WebM 和 SVG。")
-        if total_size > upload_limit_for_suffix(suffix):
-            raise ValueError(upload_limit_message(suffix))
         await asyncio.to_thread(validate_media_file, temp, suffix)
         filename = f"background-{background_id}{suffix}"
         target = paths.resolve_background_file(filename)

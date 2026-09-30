@@ -241,17 +241,8 @@ class MediaUploadTest(PalettePluginTestCase):
                 self.assertEqual(list(plugin.paths.background_dir.iterdir()), [])
                 self.assertEqual(list(plugin.paths.cover_dir.iterdir()), [])
 
-    def test_limits_and_invalid_cover_cleanup(self):
+    def test_invalid_cover_cleanup(self):
         plugin = self._make_plugin({})
-        with mock.patch.dict(media, MAX_BACKGROUND_BYTES=32):
-            self.assertEqual(self.upload(plugin, image_bytes())["status_code"], 400)
-        with mock.patch.dict(media, MAX_VIDEO_BYTES=32):
-            self.assertEqual(
-                self.upload(plugin, bundle((_FIXTURES / "sample.mp4").read_bytes()))[
-                    "status_code"
-                ],
-                400,
-            )
         huge_cover = BytesIO()
         Image.new("RGB", (4097, 1), "blue").save(huge_cover, "PNG")
         self.assertEqual(
@@ -264,6 +255,27 @@ class MediaUploadTest(PalettePluginTestCase):
         self.assertEqual(list(plugin.paths.background_dir.iterdir()), [])
         self.assertEqual(list(plugin.paths.cover_dir.iterdir()), [])
 
+    def test_original_images_and_videos_above_previous_limits_upload(self):
+        plugin = self._make_plugin({})
+        # 合法原文件附加可忽略的数据，验证实际读取超过原 10/100MiB 门槛。
+        image = image_bytes() + b"\0" * (10 * 1024 * 1024)
+        response = self.upload(plugin, image)
+        self.assertEqual(response["status_code"], 200)
+        self.assertGreater(
+            plugin._resolve_background(response["body"]["background_image"]).stat().st_size,
+            10 * 1024 * 1024,
+        )
+        padding_size = 100 * 1024 * 1024
+        video = (
+            (_FIXTURES / "sample.mp4").read_bytes()
+            + (padding_size + 8).to_bytes(4, "big") + b"free" + b"\0" * padding_size
+        )
+        response = self.upload(plugin, bundle(video))
+        self.assertEqual(response["status_code"], 200, response)
+        self.assertGreater(
+            plugin._resolve_background(response["body"]["background_image"]).stat().st_size,
+            100 * 1024 * 1024,
+        )
     def test_config_save_failure_cleans_files(self):
         plugin = self._make_plugin({})
         with mock.patch.object(

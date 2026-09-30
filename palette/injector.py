@@ -23,6 +23,7 @@ from .paths import PalettePaths
 _MEDIA_RUNTIME_JS = (
     Path(__file__).with_name("media_runtime.js").read_text(encoding="utf-8")
 )
+_MEDIA_CACHE_JS = Path(__file__).with_name("media_cache.js").read_text(encoding="utf-8")
 
 try:
     from astrbot.core.config.default import VERSION as ASTRBOT_VERSION
@@ -675,11 +676,12 @@ def _build_bootstrap_script(
     random_select_url_json = json.dumps(random_select_url)
     theme_url_json = json.dumps(theme_url)
     token_stats_url_json = json.dumps(token_stats_url)
-    return _MEDIA_RUNTIME_JS + f"""
+    return _MEDIA_CACHE_JS + _MEDIA_RUNTIME_JS + f"""
 (function () {{
     "use strict";
 
     var PaletteMedia = window.AstrBotPaletteMedia;
+    var persistentMediaCache = window.AstrBotPaletteCache.create(window);
 
     var CONFIG_URL = {config_url_json};
     var RANDOM_SELECT_URL = {random_select_url_json};
@@ -2004,26 +2006,29 @@ def _build_bootstrap_script(
       }}, BACKGROUND_DOWNLOAD_TIMEOUT_MS);
       var response;
       var blob;
+      var diskEntry;
       try {{
-      response = await fetch(withCacheBust(url), {{
-        cache: "no-store",
-        credentials: "same-origin",
-        headers: buildHeaders(token, accept),
-        signal: controller.signal,
-      }});
-      if (!response.ok) {{
-        throw new Error("HTTP " + response.status);
-      }}
-      var declaredSize = Number(response.headers.get("Content-Length")) || 0;
-      var downloadLimit = accept === "video/*" ? 100 * 1024 * 1024 : 10 * 1024 * 1024;
-      if (declaredSize > downloadLimit) {{
-        controller.abort();
-        throw new Error("背景素材超过下载大小限制。");
-      }}
-      blob = await response.blob();
-      if (blob.size > downloadLimit) {{
-        throw new Error("背景素材超过下载大小限制。");
-      }}
+        // 先查本机持久化缓存；已设置的旧壁纸也走此入口，无需重新上传。
+        diskEntry = await persistentMediaCache.read(url, controller.signal);
+        if (controller.signal.aborted) {{
+          throw new DOMException("背景下载已取消。", "AbortError");
+        }}
+        blob = diskEntry.blob;
+        if (!blob) {{
+          response = await fetch(withCacheBust(url), {{
+            cache: "no-store",
+            credentials: "same-origin",
+            headers: buildHeaders(token, accept),
+            signal: controller.signal,
+          }});
+          if (!response.ok) {{
+            throw new Error("HTTP " + response.status);
+          }}
+          blob = await response.blob();
+          // 网络超时只约束下载，不把本机磁盘写入时间算进网络等待。
+          window.clearTimeout(downloadTimer);
+          await persistentMediaCache.write(url, blob, diskEntry.epoch, controller.signal);
+        }}
       }} catch (error) {{
         if (downloadTimedOut) {{
           throw new Error("背景素材下载超时，请检查网络后刷新重试。");
@@ -2186,6 +2191,7 @@ def _build_bootstrap_script(
       if (document.visibilityState !== "visible") {{
         return currentObjectUrl || "";
       }}
+      void persistentMediaCache.setConfig(config);
       var retryFailedMedia = Boolean(arguments[3]);
       cancelBackgroundWork();
       var requestSeq = backgroundRequestSeq;
@@ -2446,6 +2452,7 @@ def _build_bootstrap_script(
         if (!isPaletteRefreshCurrent(refreshGeneration)) {{
           return;
         }}
+        void persistentMediaCache.setConfig(config);
 
         // 调度以最新配置为准：GET 成功即更新 lastConfig，主题 CSS 或
         // 图片应用失败也不让轮换协调（含领导权获权回调）回退到旧配置。
@@ -2821,6 +2828,7 @@ def _build_bootstrap_script(
         if (!isPaletteRefreshCurrent(rotationRefreshGeneration)) {{
           return;
         }}
+        void persistentMediaCache.setConfig(config);
         if (!config.enabled || !config.background_rotation_enabled) {{
           lastConfig = config;
           syncRotationSchedule();
@@ -2923,7 +2931,7 @@ def _build_bootstrap_script(
       }}
     }}
 
-    PaletteMedia.attachPreviewBridge(window, getToken);
+    PaletteMedia.attachPreviewBridge(window, getToken, persistentMediaCache);
     window.addEventListener("message", function (event) {{
       if (
         event.origin !== window.location.origin &&

@@ -519,7 +519,12 @@ async function testImport() {
   await assert.rejects(media.inspectFile(new File(["bad"], "fake.mp4")), /无法识别/);
   const huge = new File([new Uint8Array(10 * 1024 * 1024 + 1)], "large.png");
   const head = new Uint8Array([137,80,78,71,13,10,26,10]);
-  await assert.rejects(media.inspectFile(new File([head, huge], "large.png")), /10MiB/);
+  assert.equal((await media.inspectFile(new File([head, huge], "large.png"))).kind, "image");
+  const largeVideo = {
+    size: 2 * 1024 * 1024 * 1024, name: "large.mp4",
+    slice: (...args) => png.slice(...args),
+  };
+  assert.equal((await media.inspectFile(largeVideo)).kind, "video");
 }
 
 async function testPreviewBridge() {
@@ -560,6 +565,20 @@ async function testPreviewBridge() {
   assert(!callbacks.message);
 }
 
+async function testUnavailablePersistentStorage() {
+  const { create } = require("../palette/media_cache.js");
+  for (const indexedDB of [undefined, { open() { throw new Error("storage blocked"); } }]) {
+    const cache = create({ indexedDB, setTimeout, clearTimeout });
+    await cache.setConfig(videoConfig("/existing-wallpaper"));
+    const entry = await cache.read("/existing-wallpaper");
+    assert.equal(entry.blob, null);
+    assert.equal(await cache.write("/existing-wallpaper", new Blob(["video"]), entry.epoch), false);
+    assert.equal((await cache.stats()).available, false);
+    assert.equal((await cache.clear()).cleared, false);
+    cache.close();
+  }
+}
+
 (async () => {
   await testRuntime();
   await testPlaybackRecovery();
@@ -567,5 +586,6 @@ async function testPreviewBridge() {
   await testHiddenRefreshLifecycle();
   await testImport();
   await testPreviewBridge();
+  await testUnavailablePersistentStorage();
   console.log("媒体运行时、上传包与 Wallpaper Engine 目录行为验证通过");
 })().catch((error) => { console.error(error); process.exitCode = 1; });

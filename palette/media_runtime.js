@@ -213,13 +213,25 @@
     return false;
   }
 
-  function attachPreviewBridge(root, getToken) {
+  function attachPreviewBridge(root, getToken, mediaCache) {
     // opaque iframe 不能读 localStorage：主页面只为经过来源校验的
     // 调色盘设置页下载限定素材，并传输 ArrayBuffer，不传递登录令牌。
     var pending = new Map();
     var onMessage = async function (event) {
       var data = event.data;
       if (!data || !isPaletteSettingsMessage(event, root)) {
+        return;
+      }
+      if (mediaCache && data.type === "astrbot-palette:cache-request" &&
+          typeof data.requestId === "string" && data.requestId.length <= 120 &&
+          (data.action === "stats" || data.action === "clear")) {
+        var cacheStatus = await mediaCache[data.action]();
+        if (isPaletteSettingsMessage(event, root)) {
+          event.source.postMessage({
+            type: "astrbot-palette:cache-response",
+            requestId: data.requestId, status: cacheStatus,
+          }, "*");
+        }
         return;
       }
       var previous = pending.get(event.source);
@@ -247,29 +259,41 @@
         var path = data.cover === true
           ? prefix + "background-cover?filename=" + encodeURIComponent(data.filename)
           : prefix + "backgrounds/" + encodeURIComponent(data.filename);
-        var limit = !data.cover && /\.(mp4|webm)$/i.test(data.filename)
-          ? 100 * 1024 * 1024 : 10 * 1024 * 1024;
         var token = getToken();
-        var response = await root.fetch(path, {
-          signal: controller.signal,
-          credentials: "same-origin",
-          headers: token ? { Authorization: "Bearer " + token } : {},
-        });
-        if (!response.ok) {
-          throw new Error("素材读取失败（HTTP " + response.status + "）");
+        // 先核验最新登录配置，预览只复用仍在图库中的本机素材。
+        if (mediaCache) {
+          var configResponse = await root.fetch(prefix + "config", {
+            signal: controller.signal, credentials: "same-origin", cache: "no-store",
+            headers: token ? { Authorization: "Bearer " + token } : {},
+          });
+          if (!configResponse.ok) throw new Error("素材权限核验失败（HTTP " + configResponse.status + "）");
+          await mediaCache.setConfig(await configResponse.json());
         }
-        if ((Number(response.headers.get("Content-Length")) || 0) > limit) {
-          throw new Error("素材超过预览大小限制。");
-        }
-        var buffer = await response.arrayBuffer();
-        if (buffer.byteLength > limit) {
-          throw new Error("素材超过预览大小限制。");
+        var cached = mediaCache ? await mediaCache.read(path, controller.signal) : { blob: null, epoch: null };
+        var buffer;
+        var type;
+        if (cached.blob) {
+          buffer = await cached.blob.arrayBuffer();
+          type = cached.blob.type;
+        } else {
+          var response = await root.fetch(path, {
+            signal: controller.signal,
+            credentials: "same-origin",
+            headers: token ? { Authorization: "Bearer " + token } : {},
+          });
+          if (!response.ok) {
+            throw new Error("素材读取失败（HTTP " + response.status + "）");
+          }
+          buffer = await response.arrayBuffer();
+          type = response.headers.get("Content-Type") || "application/octet-stream";
+          if (mediaCache) {
+            await mediaCache.write(path, new root.Blob([buffer], { type: type }), cached.epoch, controller.signal);
+          }
         }
         if (pending.get(event.source) !== entry || controller.signal.aborted ||
             !isPaletteSettingsMessage(event, root)) {
           return;
         }
-        var type = response.headers.get("Content-Type") || "application/octet-stream";
         // 只向已核实的 source 回传；opaque iframe 要求 targetOrigin="*"。
         event.source.postMessage({
           type: "astrbot-palette:media-response",

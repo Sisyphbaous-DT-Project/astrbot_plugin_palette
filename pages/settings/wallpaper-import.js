@@ -1,4 +1,4 @@
-import { MEDIA_LIMITS, inspectFile, makeCover } from "./media.js";
+import { inspectFile, makeCover } from "./media.js";
 
 const IMAGE_EXTENSIONS = /\.(jpe?g|png|webp)$/i;
 const VIDEO_EXTENSIONS = /\.(mp4|webm)$/i;
@@ -154,7 +154,7 @@ export function initWallpaperImport(panel, upload, report) {
         ? `已导入${item.orientation === "portrait" ? "竖屏" : "横屏"}`
         : item.state === "uploading" ? "导入中"
           : item.state === "failed" ? "重试" : "导入";
-      button.disabled = busy || item.file.size > MEDIA_LIMITS[item.kind] || item.state === "imported";
+      button.disabled = busy || item.state === "imported";
       button.parentNode.querySelector(".import-error").textContent = item.error || "";
     }
   }
@@ -169,9 +169,7 @@ export function initWallpaperImport(panel, upload, report) {
       const description = document.createElement("div");
       const title = document.createElement("strong"); title.textContent = item.name;
       const detail = document.createElement("small");
-      const max = MEDIA_LIMITS[item.kind];
-      const tooLarge = item.file.size > max;
-      detail.textContent = `${item.kind === "video" ? "视频" : "图片"} · ${(item.file.size / 1024 / 1024).toFixed(1)}MiB${tooLarge ? ` · 超过 ${max / 1024 / 1024}MiB 限制` : ""}`;
+      detail.textContent = `${item.kind === "video" ? "视频" : "图片"} · ${(item.file.size / 1024 / 1024).toFixed(1)}MiB`;
       const error = document.createElement("small"); error.className = "import-error"; error.textContent = item.error || "";
       description.append(title, detail, error);
       const button = document.createElement("button"); button.type = "button";

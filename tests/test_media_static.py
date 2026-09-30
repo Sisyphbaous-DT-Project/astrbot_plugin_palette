@@ -43,16 +43,19 @@ class MediaSettingsTest(unittest.TestCase):
         self.assertIn("mediaPreview.close()", app)
 
     def test_current_versions_are_consistent(self):
-        self.assertIn('VERSION = "0.5.1"', (ROOT / "palette/constants.py").read_text())
-        self.assertIn('version: "0.5.1"', (ROOT / "metadata.yaml").read_text())
-        self.assertIn("当前版本：`0.5.1`", (ROOT / "README.md").read_text())
-        self.assertTrue((ROOT / "changelogs/v0.5.1.md").is_file())
+        self.assertIn('VERSION = "0.5.2"', (ROOT / "palette/constants.py").read_text())
+        self.assertIn('version: "0.5.2"', (ROOT / "metadata.yaml").read_text())
+        self.assertIn("当前版本：`0.5.2`", (ROOT / "README.md").read_text())
+        self.assertTrue((ROOT / "changelogs/v0.5.2.md").is_file())
 
     def test_new_javascript_modules_parse(self):
         for path in (
             "palette/media_runtime.js",
+            "palette/media_cache.js",
             "pages/settings/media.js",
             "pages/settings/wallpaper-import.js",
+            "pages/settings/local-cache.js",
+            "tests/media_cache_browser.cjs",
         ):
             with self.subTest(path=path):
                 result = subprocess.run(
@@ -61,3 +64,14 @@ class MediaSettingsTest(unittest.TestCase):
                     text=True,
                 )
                 self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_local_cache_is_browser_local_and_has_clear_entry(self):
+        schema = json.loads((ROOT / "_conf_schema.json").read_text())
+        self.assertNotIn("local_cache", schema)
+        html = (ROOT / "pages/settings/index.html").read_text()
+        self.assertIn('id="local-cache-status"', html)
+        self.assertIn('id="clear-local-cache"', html)
+        self.assertIn("1GiB", (ROOT / "README.md").read_text())
+        self.assertIn("无需重新上传", (ROOT / "README.md").read_text())
+        self.assertNotIn("local-cache-quota", html)
+        self.assertNotIn("100MiB", html)

@@ -1,5 +1,4 @@
 // 素材上传和独立预览共用：真实类型探测、静态封面、单文件上传包。
-export const MEDIA_LIMITS = { image: 10 * 1024 * 1024, svg: 10 * 1024 * 1024, video: 100 * 1024 * 1024 };
 export const BUNDLE_MAGIC = "PALETTE-MEDIA-1\n";
 
 export async function inspectFile(file) {
@@ -21,7 +20,6 @@ export async function inspectFile(file) {
     }
   }
   if (!kind) throw new Error(`不支持或无法识别的素材：${file.name}`);
-  if (file.size > MEDIA_LIMITS[kind]) throw new Error(`${file.name} 超过${kind === "video" ? "视频 100MiB" : "图片/SVG 10MiB"}限制`);
   return { kind, mime };
 }
 
@@ -134,7 +132,7 @@ export async function prepareUpload(file) {
   return file;
 }
 
-export async function fetchMediaBlob(url, signal, limit = MEDIA_LIMITS.video) {
+export async function fetchMediaBlob(url, signal) {
   // AstrBot 设置页 sandbox 没有 allow-same-origin，不能读取 localStorage。
   // 主页面注入脚本代为鉴权下载，只返回限定素材字节，不下发令牌。
   if (window.parent !== window) {
@@ -162,7 +160,7 @@ export async function fetchMediaBlob(url, signal, limit = MEDIA_LIMITS.video) {
         if (event.source !== window.parent || event.origin !== mediaUrl.origin ||
             data?.type !== "astrbot-palette:media-response" || data.requestId !== requestId) return;
         if (!data.success) finish(new Error(data.message || "素材读取失败"));
-        else if (!(data.buffer instanceof ArrayBuffer) || data.buffer.byteLength > limit) finish(new Error("素材超过预览大小限制"));
+        else if (!(data.buffer instanceof ArrayBuffer)) finish(new Error("素材预览响应不正确"));
         else finish(null, data);
       };
       const timer = setTimeout(() => {
@@ -184,9 +182,7 @@ export async function fetchMediaBlob(url, signal, limit = MEDIA_LIMITS.video) {
     headers: token ? { Authorization: `Bearer ${token}` } : {},
   });
   if (!response.ok) throw new Error(`素材读取失败（HTTP ${response.status}）`);
-  if (Number(response.headers.get("Content-Length")) > limit) throw new Error("素材超过预览大小限制");
   const blob = await response.blob();
-  if (blob.size > limit) throw new Error("素材超过预览大小限制");
   return blob;
 }
 
@@ -241,10 +237,7 @@ export function initMediaPreview(dialog, getConfig, report) {
         const frozen = config.dynamic_background_enabled === false || reduced;
         const url = frozen && item.media_type !== "image" ? item.cover_url : item.url;
         if (!url) throw new Error("该素材缺少静态封面");
-        const blob = await fetchMediaBlob(
-          url, controller.signal,
-          !frozen && item.media_type === "video" ? MEDIA_LIMITS.video : MEDIA_LIMITS.image,
-        );
+        const blob = await fetchMediaBlob(url, controller.signal);
         if (generation !== request) return;
         objectUrl = URL.createObjectURL(blob);
         media = document.createElement(!frozen && item.media_type === "video" ? "video" : "img");
@@ -257,7 +250,7 @@ export function initMediaPreview(dialog, getConfig, report) {
         const useCover = async () => {
           if (generation !== request) return;
           if (!item.cover_url) throw new Error("视频播放失败且没有静态封面");
-          const coverBlob = await fetchMediaBlob(item.cover_url, controller.signal, MEDIA_LIMITS.image);
+          const coverBlob = await fetchMediaBlob(item.cover_url, controller.signal);
           if (generation !== request) return;
           if (mediaErrorListener) media.removeEventListener("error", mediaErrorListener);
           mediaErrorListener = null;

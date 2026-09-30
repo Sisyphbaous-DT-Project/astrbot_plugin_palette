@@ -1,6 +1,7 @@
 import { initLiquidGlass } from "./liquid-glass.js";
 import { prepareUpload, initMediaPreview } from "./media.js";
 import { initWallpaperImport } from "./wallpaper-import.js";
+import { initLocalCache } from "./local-cache.js";
 
 const bridge = window.AstrBotPluginPage;
 
@@ -93,6 +94,11 @@ const wallpaperImport = initWallpaperImport(
   },
   setStatus,
 );
+const localCache = initLocalCache(
+  document.getElementById("local-cache-status"),
+  document.getElementById("clear-local-cache"),
+  setStatus,
+);
 
 function applyThemeFromContext(context) {
   const fallbackTheme = new URLSearchParams(window.location.search).get("theme");
@@ -130,6 +136,7 @@ function activateTab(tabName, focusButton = false) {
 
   if (tabName === "gallery") {
     updatePreview();
+    void localCache.refresh();
   }
 
   if (focusButton) {
@@ -1015,6 +1022,7 @@ async function loadPaletteState() {
     await loadRemotePreview(config);
     renderStatus(status, config);
     setStatus("设置已同步", "success");
+    void localCache.refresh();
   } catch (error) {
     setStatus(error?.message || "读取失败", "danger");
     renderList(statusList, [["错误", error?.message || "读取失败"]]);

@@ -148,7 +148,12 @@
                     <span>动态背景</span>
                   </label>
                   <button id="open-wallpaper-import" class="ghost-button" type="button">从 Wallpaper Engine 导入</button>
-                  <small>图片 / SVG ≤10MiB · 视频 ≤100MiB · 系统减少动态效果时显示静态封面</small>
+                  <small>原素材无插件体积上限 · 普通缓存 1GiB，大素材单独保留 · 系统减少动态效果时显示静态封面</small>
+                </div>
+                <div class="media-settings">
+                  <span id="local-cache-status" class="control-hint" aria-live="polite">本机缓存：读取中</span>
+                  <button id="clear-local-cache" class="ghost-button" type="button">清理本机缓存</button>
+                  <small>当前壁纸和使用过的素材自动缓存，刷新和重启后优先读取本地；清理只影响本浏览器。</small>
                 </div>
                 <section id="wallpaper-import-panel" class="wallpaper-import-panel" hidden>
                   <div class="wallpaper-import-toolbar">
