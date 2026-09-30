@@ -8,13 +8,15 @@ AstrBot调色盘是一个 AstrBot WebUI 美化插件。当前版本聚焦于背�
 
 当前已核对兼容 AstrBot `4.28.2`。
 
-> 当前版本：`0.4.20`
+> 当前版本：`0.5.1`
 >
 > 兼容 AstrBot：`>=4.26.0-beta1`，已核对 `4.28.2` 源码及数据库行为；配置页和 ChatUI 的浏览器验收基于 `4.28.1`。本轮未使用 `4.28.2` Dashboard 构建资源重新验收浏览器页面，`4.26/4.27` 保留兼容规则。
 
 ## 功能
 
-- 分别上传横屏和竖屏 WebUI 背景图片，并通过真实压缩缩略图库一键切换。
+- 分别上传横屏和竖屏 WebUI 背景素材，并通过真实压缩缩略图库一键切换。
+- 支持 MP4/WebM 视频、GIF/动态 WebP 和自包含 SVG，提供动态开关、持久化封面和独立素材预览。
+- 从浏览器选择的 Wallpaper Engine 目录识别原视频和静态原图片，一键加入指定方向图库；scene/web/application 专用类型跳过。
 - 支持横屏/竖屏设备自动使用对应壁纸，旋转或拖拽改变方向时会叠化切换。
 - 支持打开或刷新 WebUI 时从当前方向图库随机切换背景。
 - 支持按自定义间隔（1～1440 分钟）定时随机轮换背景，不会连续重复当前图，页面隐藏时自动暂停。
@@ -61,38 +63,63 @@ git clone https://github.com/Sisyphbaous-DT-Project/astrbot_plugin_palette.git
 
 - 插件名：`astrbot_plugin_palette`
 - 展示名：`AstrBot调色盘`
-- 版本：`0.4.20`
+- 版本：`0.5.1`
 
 ## 使用
 
 1. 打开 AstrBot WebUI。
 2. 进入插件管理，找到 `AstrBot调色盘`。
 3. 打开插件设置页。
-4. 分别在横屏图库或竖屏图库上传一张或多张背景图片。
-5. 在对应缩略图库中点击图片，切换该方向的当前 WebUI 背景。
+4. 分别在横屏图库或竖屏图库上传一项或多项背景素材。
+5. 在对应缩略图库中点击素材，切换该方向的当前 WebUI 背景。
 6. 按喜好调整透明度、遮罩、背景滤镜、文字增强、随机背景、定时轮换和主题色联动。
 7. 保存后刷新 WebUI，背景会自动应用到 Dashboard。
 
-支持的背景图片格式：
+支持 JPG/JPEG、PNG、WebP、GIF、MP4、WebM、SVG。图片/SVG 单项最大 `10MiB`（10,485,760 字节），视频最大 `100MiB`（104,857,600 字节）。文件 MIME 为空或扩展名不准确时以真实内容为准。
 
-- `jpg`
-- `jpeg`
-- `png`
-- `webp`
-- `gif`
+### 动态背景与封面
 
-单张图片最大 `10MB`。
+视频默认静音、循环、内联播放。普通 H.264 MP4、VP8/VP9 WebM 是优先支持的编码组合；MP4/WebM 是容器名称，可播放性仍取决于浏览器，本插件不会自动转码。上传时浏览器先读取代表画面生成封面，无法解码时给出错误、不加入图库。
+
+GIF/动态 WebP 由现有 Pillow 提取代表帧。视频/SVG 的封面由浏览器 canvas 生成，与原素材封装成一次上传；服务器校验格式、大小和尺寸后保存。封面源图限制 `4MiB` / 最大边 `4096px`，落盘限制最大边 `1280px`。新图片也生成静态代表帧。无需安装 FFmpeg 或 SVG 栅格化程序，继续使用 AstrBot 环境中的 Pillow。
+
+图库与默认效果预览仍只加载最大边 `320px` 的静态缩略图，Liquid Glass 使用同一小图。点击图库项旁的“预览”才打开原素材，显示当前遮罩、滤镜、填充方式和位置；关闭预览、切换标签或隐藏页面会停止并释放预览。
+
+新增的导入方向菜单、操作按钮、素材标识和预览弹窗沿用原设置页的 Liquid Glass 颜色、圆角与玻璃变量，支持深浅主题与窄屏布局。AstrBot 的设置页位于沙箱 iframe，独立预览由主页面注入脚本代为鉴权下载并传回素材字节；设置页不读取或接收登录令牌。升级插件后需要完整刷新 WebUI，让新版注入脚本生效。
+
+`dynamic_background_enabled` 默认开启。关闭或系统启用“减少动态效果”时，视频、动图和 SVG 使用持久化静态封面。SVG 不一定有动画，支持范围是图片模式中的常规自包含 SVG/CSS 声明式动画。旧 GIF/动态 WebP 的封面会在首次需要时生成，无需重新上传。
+
+Dashboard 使用带 Bearer 鉴权的 fetch 完整下载素材，再生成本地 Blob URL 播放，不把令牌放进媒体 URL。视频需整段下载后才准备首帧，大视频首次加载会等待更久；远程部署需上传和下载原视频，服务器/反向代理也必须允许对应请求体和超时（设置页 bridge 上传超时约 60 秒）。本版不提供 Range 流式播放，也不承诺大型创意工坊视频均可导入。
+
+普通外观刷新和路由切换复用播放元素与进度。页面隐藏暂停视频，恢复后继续；切换、禁用或离开页面释放视频和废弃下载。新视频准备失败保留旧背景，首次失败使用封面。图片缓存保持 4 项保护型 LRU，另加 `128MiB` 字节预算；完整视频仅在准备/在用/叠化期间保留，失去引用后立即回收，过渡期间可临时超过预算。
+
+主动暂停中断尚未完成的播放不会永久关闭视频。临时失败时，恢复可见、网络恢复或在设置页明确点击“刷新”/保存可触发一次重试；正常播放的普通路由刷新仍复用元素和进度，不循环重试或反复下载。背景下载限制 `60 秒`，设置变更会及时取消旧下载与首帧准备，仍按原来的刷新互斥合并应用最新配置。
+
+外观保存只提交可编辑设置，保留服务端最新的图库、当前素材和自动取色，避免另一个设置页的旧快照覆盖新上传。页面隐藏或离开时，等待配置、样式和轮换响应的旧刷新也会失效；迟到响应不再启动媒体准备，恢复可见后重新读取最新配置。
+
+### Wallpaper Engine 导入
+
+图库页点击“从 Wallpaper Engine 导入”，选择本地目录，再选横屏或竖屏目标，点击某项“导入”。可以选择 Steam 的 `steamapps/workshop/content/431960`、单个项目目录或普通静态图片目录；不自动扫描电脑，也不把 Windows 路径发送到服务器读取。
+
+支持 `project.json` 中 `file` 指向的 MP4/WebM 原视频、JPG/JPEG/PNG/WebP 原图片；缺少 `type` 时根据真实主文件判断。列表可使用项目预览图，真正上传的始终是主文件。普通图片目录支持独立原图片；项目预览、内部纹理和 scene/web/application 内容不作为独立壁纸。损坏元信息、主文件缺失、越界路径和专用类型只影响对应项并显示跳过统计。
+
+目录授权优先使用只读 `showDirectoryPicker`，受浏览器、安全上下文和 iframe 限制；另有“选择目录（兼容方式）”的 `webkitdirectory` 回退。取消选择保持图库与配置；不支持目录选择时仍可使用普通文件上传。远程 AstrBot 同样由浏览器读取所选本地文件后上传。导入不修改、移动、删除源素材，不回写 Wallpaper Engine。
+
+列表显示大小和上限，超限项不能导入。失败可重试，同次会话成功条目标记已导入，部分成功不回滚。已有当前背景时只增加素材；目标方向无当前背景时第一项成为当前背景。本版不支持场景渲染、解包、网页执行、录屏转换或读取当前桌面壁纸。
+
+同一页面再次选择同一目录时，按素材相对路径、文件名、体积与修改时间恢复已导入标记；文件变化或不同路径仍可导入，不做跨会话去重。导入过程中只更新状态按钮，保留已经生成的列表预览。多个标签页上传或删除时，原素材处理可并发，最终图库配置更新串行合并，避免成功文件失去图库引用。
 
 ## 配置项
 
 | 配置项 | 说明 | 默认值 |
 | --- | --- | --- |
 | `enabled` | 是否启用 WebUI 美化 | `true` |
-| `background_image` | 当前背景图片文件名 | `""` |
+| `dynamic_background_enabled` | 允许动态背景；关闭或系统减少动态效果时使用静态封面 | `true` |
+| `background_image` | 当前背景素材文件名 | `""` |
 | `background_images` | 背景图库文件名列表 | `[]` |
-| `landscape_background_image` | 横屏当前背景图片文件名 | `""` |
+| `landscape_background_image` | 横屏当前背景素材文件名 | `""` |
 | `landscape_background_images` | 横屏背景图库文件名列表 | `[]` |
-| `portrait_background_image` | 竖屏当前背景图片文件名 | `""` |
+| `portrait_background_image` | 竖屏当前背景素材文件名 | `""` |
 | `portrait_background_images` | 竖屏背景图库文件名列表 | `[]` |
 | `background_fit` | 背景填充方式，可选 `cover`、`contain`、`stretch`、`auto` | `cover` |
 | `background_position` | 背景位置 | `center center` |
@@ -137,9 +164,9 @@ themeSecondary
 
 `0.4.4` 起，背景图库分为横屏壁纸和竖屏壁纸。上传到横屏分区的图片会在电脑或横屏视口优先显示；上传到竖屏分区的图片会在手机或竖屏视口优先显示。插件不会按图片尺寸自动分类，图片属于哪个方向完全由上传入口决定。
 
-旧版单图库配置会默认显示在横屏图库里；竖屏图库为空时仍会自动回退到旧背景。删除背景图片会删除这个文件在横屏、竖屏和旧图库里的所有引用，避免配置里留下已经不存在的图片。
+旧版单图库配置会默认显示在横屏图库里；竖屏图库为空时仍会自动回退到旧背景。删除背景素材会删除这个文件在横屏、竖屏和旧图库里的所有引用，避免配置里留下已经不存在的图片。
 
-AstrBot 4.27.3 及更高版本的插件配置页支持逐项“恢复默认值”。这个操作只会清空配置引用，不会替调色盘删除数据目录中的背景原图和缩略图；如果要彻底清理图片，请优先在调色盘图库中删除，已经恢复默认后留下的文件需要手动清理插件数据目录里的 `backgrounds` 文件夹。
+AstrBot 4.27.3 及更高版本的插件配置页支持逐项“恢复默认值”。这个操作只清空配置引用，不会删除背景原素材、缩略图和封面；需要清理素材时请优先在调色盘图库中删除，已经恢复默认后留下的文件需手动清理插件数据目录里的 `backgrounds`、`thumbnails` 和 `covers` 文件夹。
 
 Dashboard 会监听视口方向变化。浏览器从竖屏切到横屏时，会预加载横屏当前壁纸并以叠化方式切换；横屏切回竖屏时同理。如果某个方向还没有壁纸，会自动回退到旧背景或另一方向壁纸，避免黑屏。
 
@@ -191,7 +218,7 @@ Dashboard 会监听视口方向变化。浏览器从竖屏切到横屏时，会�
 <!-- astrbot_plugin_palette:end -->
 ```
 
-背景图片保存在插件数据目录下：
+背景素材保存在插件数据目录下：
 
 ```text
 data/plugin_data/astrbot_plugin_palette/backgrounds
@@ -202,6 +229,8 @@ data/plugin_data/astrbot_plugin_palette/backgrounds
 ```text
 data/plugin_data/astrbot_plugin_palette/thumbnails
 ```
+
+持久化封面保存在 `data/plugin_data/astrbot_plugin_palette/covers`。删除素材时原文件、封面、缩略图和所有方向引用一并清理。视频/SVG 主题色从代表画面提取，不随每帧变化，保留手动重算；封面缺失或损坏时明确报错。
 
 Dashboard 入口备份保存在：
 
@@ -221,14 +250,15 @@ data/plugin_data/astrbot_plugin_palette/dashboard_backups
 | `GET` | `/astrbot_plugin_palette/theme.css` | 获取运行时主题 CSS |
 | `GET` | `/astrbot_plugin_palette/background-preview` | 获取当前背景预览 |
 | `GET` | `/astrbot_plugin_palette/background-thumbnail` | 获取图库压缩缩略图 |
+| `GET` | `/astrbot_plugin_palette/background-cover?filename=...` | 读取鉴权静态封面 |
 | `GET` | `/astrbot_plugin_palette/token-stats` | 获取模型 Token 明细统计 |
-| `POST` | `/astrbot_plugin_palette/upload-background` | 上传背景图片到图库 |
-| `POST` | `/astrbot_plugin_palette/upload-background/<orientation>` | 上传背景图片到横屏或竖屏图库 |
-| `POST` | `/astrbot_plugin_palette/backgrounds/select` | 切换当前背景图片 |
-| `POST` | `/astrbot_plugin_palette/backgrounds/delete` | 删除图库背景图片 |
+| `POST` | `/astrbot_plugin_palette/upload-background` | 上传背景素材到图库 |
+| `POST` | `/astrbot_plugin_palette/upload-background/<orientation>` | 上传背景素材到横屏或竖屏图库 |
+| `POST` | `/astrbot_plugin_palette/backgrounds/select` | 切换当前背景素材 |
+| `POST` | `/astrbot_plugin_palette/backgrounds/delete` | 删除图库背景素材 |
 | `POST` | `/astrbot_plugin_palette/backgrounds/random-select` | 随机切换并写回当前背景 |
 | `POST` | `/astrbot_plugin_palette/theme-colors/recalculate` | 重新读取当前壁纸主题色 |
-| `GET` | `/astrbot_plugin_palette/backgrounds/<filename>` | 读取背景图片 |
+| `GET` | `/astrbot_plugin_palette/backgrounds/<filename>` | 读取背景素材 |
 
 ## 深色主题提示
 
@@ -249,6 +279,11 @@ astrbot_palette_dark_theme_bootstrapped=1
 - 高级 CSS 会拦截 `@import` 和外链 `url()`，避免引入外部资源。
 - 背景文件名会被限制为插件生成的本地文件名，避免路径穿越。
 - 上传图片会检查扩展名、大小和文件头。
+- 新素材按真实内容校验，视频检查容器结构与视频轨道，图片实际解码校验。视频/SVG 必须附带合法封面，全部成功后才入库；旧静态图片直接上传仍支持。
+- SVG 拒绝脚本、事件属性、外部资源、非 SVG 内容、DOCTYPE/实体和不支持的样式转义，仅以图片模式加载、不插入应用 DOM；直读响应附带 `nosniff` 和 CSP sandbox。
+- 沙箱预览通信同时核对 iframe 的 `contentWindow`、同源调色盘设置页路径和素材文件名，只下载本插件素材/封面；不接受任意 URL，不传递登录令牌，关闭预览会取消废弃请求。
+
+公开配置保留全部旧字段，新增动态开关和各方向 `*_background_media` 信息。图库项新增 `media_type`、`animated`、`cover_url`、`size_bytes`。视频/SVG 的 `background-preview` 返回封面，绝不返回完整视频 base64。原上传路由不变；设置页通过 bridge 单文件上传封装 `PALETTE-MEDIA-1\n`、4 字节大端封面长度、封面 PNG 和原素材，服务器拆分校验。未附封面的外部视频/SVG 上传返回中文错误。
 
 ## 开发检查
 
@@ -258,6 +293,9 @@ astrbot_palette_dark_theme_bootstrapped=1
 PYTHONPATH=/path/to/AstrBot python -m py_compile main.py palette/*.py
 node --check pages/settings/app.js
 node --check pages/settings/liquid-glass.js
+node --check pages/settings/media.js
+node --check pages/settings/wallpaper-import.js
+node --check palette/media_runtime.js
 python -m json.tool _conf_schema.json
 python -m unittest discover -s tests -p "test_*.py"
 git diff --check
@@ -318,6 +356,8 @@ git diff --check
 `0.4.19` 修复 AstrBot `4.28.1` 配置页的黑色工具栏和外框明暗接缝：工具栏随正文滚动，正文在顶栏下方滚动，分组卡片保留单层玻璃；统一 Bot 与 ChatUI 外框底色，消除 ChatUI 欢迎语和输入区横带，导航按钮默认透明并保留交互反馈。桌面、窄屏、深浅主题和毛玻璃开关已在本地浏览器验证。
 
 `0.4.20` 核对 AstrBot `4.28.2` 的全部版本差异：上游仅调整数据库时间字段存储、消息历史清理的时区及版本信息，没有修改 Dashboard 页面、目录解析器或插件接口；调色盘无需改动功能代码。使用 `4.28.2` 的数据库模型验证 Token 明细统计正常，浏览器页面仍沿用 `4.28.1` 的验收结果。升级核心时请确保 Dashboard 构建资源版本匹配：桌面托管模式会拒绝旧版本的 `data/dist`。
+
+`0.5.1` 新增视频、动图静态兜底、自包含 SVG、动态开关、持久化封面与独立素材预览，以及 Wallpaper Engine 原视频/静态图片的本地目录导入。保留旧图库、轮换、主题色、Dashboard 路径解析和外框样式；不提高 AstrBot 兼容下限，新媒体功能完整浏览器与旧版本运行验收待后续安排。
 
 后续版本会继续补齐更多页面的透明化细节，并探索更完整的主题色板推导。
 

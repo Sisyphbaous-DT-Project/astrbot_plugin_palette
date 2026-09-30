@@ -142,6 +142,32 @@
                     <span>分钟随机切换</span>
                   </label>
                 </div>
+                <div class="media-settings">
+                  <label class="switch">
+                    <input id="dynamic-background-enabled" name="dynamic_background_enabled" type="checkbox" checked />
+                    <span>动态背景</span>
+                  </label>
+                  <button id="open-wallpaper-import" class="ghost-button" type="button">从 Wallpaper Engine 导入</button>
+                  <small>图片 / SVG ≤10MiB · 视频 ≤100MiB · 系统减少动态效果时显示静态封面</small>
+                </div>
+                <section id="wallpaper-import-panel" class="wallpaper-import-panel" hidden>
+                  <div class="wallpaper-import-toolbar">
+                    <label class="wallpaper-import-direction">
+                      <span>导入图库</span>
+                      <select id="wallpaper-import-orientation" data-import-orientation>
+                        <option value="landscape">横屏</option>
+                        <option value="portrait">竖屏</option>
+                      </select>
+                    </label>
+                    <button data-select-directory class="ghost-button" type="button">选择本地目录</button>
+                    <button data-directory-fallback class="ghost-button" type="button">选择目录（兼容方式）</button>
+                    <button data-close-import class="ghost-button" type="button">关闭</button>
+                    <input data-directory-input type="file" webkitdirectory multiple hidden />
+                  </div>
+                  <p class="control-hint">可选择 Steam 创意工坊目录 steamapps/workshop/content/431960、单个项目或普通图片目录。仅上传点击导入的原素材，scene / web / application 跳过。</p>
+                  <p class="wallpaper-import-summary" aria-live="polite"></p>
+                  <div class="wallpaper-import-list"></div>
+                </section>
                 <div class="orientation-preview-toggle" role="group" aria-label="预览方向">
                   <button class="is-active" type="button" data-preview-orientation="landscape">
                     横屏预览
@@ -153,13 +179,13 @@
 
                 <div class="orientation-gallery" data-orientation-panel="landscape">
                   <div class="current-file">
-                    <span>横屏当前图片</span>
+                    <span>横屏当前素材</span>
                     <strong id="landscape-background-name">未设置</strong>
                   </div>
                   <label class="upload-box" for="landscape-background-file">
                     <input
                       id="landscape-background-file"
-                      accept="image/jpeg,image/png,image/webp,image/gif"
+                      accept=".jpg,.jpeg,.png,.webp,.gif,.svg,.mp4,.webm,image/jpeg,image/png,image/webp,image/gif,image/svg+xml,video/mp4,video/webm"
                       data-upload-orientation="landscape"
                       multiple
                       type="file"
@@ -173,19 +199,19 @@
                     data-gallery-orientation="landscape"
                     aria-live="polite"
                   >
-                    <p class="gallery-empty">横屏图库里还没有图片。</p>
+                    <p class="gallery-empty">横屏图库里还没有素材。</p>
                   </div>
                 </div>
 
                 <div class="orientation-gallery" data-orientation-panel="portrait">
                   <div class="current-file">
-                    <span>竖屏当前图片</span>
+                    <span>竖屏当前素材</span>
                     <strong id="portrait-background-name">未设置</strong>
                   </div>
                   <label class="upload-box" for="portrait-background-file">
                     <input
                       id="portrait-background-file"
-                      accept="image/jpeg,image/png,image/webp,image/gif"
+                      accept=".jpg,.jpeg,.png,.webp,.gif,.svg,.mp4,.webm,image/jpeg,image/png,image/webp,image/gif,image/svg+xml,video/mp4,video/webm"
                       data-upload-orientation="portrait"
                       multiple
                       type="file"
@@ -199,7 +225,7 @@
                     data-gallery-orientation="portrait"
                     aria-live="polite"
                   >
-                    <p class="gallery-empty">竖屏图库里还没有图片。</p>
+                    <p class="gallery-empty">竖屏图库里还没有素材。</p>
                   </div>
                 </div>
               </section>
@@ -640,6 +666,13 @@
       </section>
     </main>
 
+    <dialog id="media-preview-dialog" aria-label="素材预览">
+      <div class="media-preview-toolbar">
+        <strong class="media-preview-title"></strong>
+        <button data-close-preview class="ghost-button" type="button">关闭预览</button>
+      </div>
+      <div class="media-preview-stage"></div>
+    </dialog>
     <script type="module" src="./app.js"></script>
   </body>
 </html>

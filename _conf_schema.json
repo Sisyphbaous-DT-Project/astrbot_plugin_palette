@@ -5,11 +5,17 @@
     "default": true,
     "hint": "默认启用；首次使用建议搭配 AstrBot 深色模式。"
   },
+  "dynamic_background_enabled": {
+    "description": "动态背景",
+    "type": "bool",
+    "default": true,
+    "hint": "允许视频、动图和 SVG 动画；关闭或系统减少动态效果时显示静态封面。视频静音循环，播放取决于浏览器支持的编码。"
+  },
   "background_image": {
-    "description": "背景图片路径",
+    "description": "背景素材路径",
     "type": "string",
     "default": "",
-    "hint": "当前选中的背景图片文件名，通过插件设置页切换后自动填入。"
+    "hint": "当前选中的背景素材文件名，通过插件设置页切换后自动填入。"
   },
   "background_images": {
     "description": "背景图库",
@@ -18,13 +24,13 @@
       "type": "string"
     },
     "default": [],
-    "hint": "由插件设置页维护的背景图片文件名列表。"
+    "hint": "由插件设置页维护的背景素材文件名列表。"
   },
   "landscape_background_image": {
-    "description": "横屏背景图片路径",
+    "description": "横屏背景素材路径",
     "type": "string",
     "default": "",
-    "hint": "横屏设备或横屏视口优先使用的背景图片文件名。"
+    "hint": "横屏设备或横屏视口优先使用的背景素材文件名。"
   },
   "landscape_background_images": {
     "description": "横屏背景图库",
@@ -33,13 +39,13 @@
       "type": "string"
     },
     "default": [],
-    "hint": "上传到横屏分区的背景图片文件名列表。"
+    "hint": "上传到横屏分区的背景素材文件名列表。"
   },
   "portrait_background_image": {
-    "description": "竖屏背景图片路径",
+    "description": "竖屏背景素材路径",
     "type": "string",
     "default": "",
-    "hint": "竖屏设备或竖屏视口优先使用的背景图片文件名。"
+    "hint": "竖屏设备或竖屏视口优先使用的背景素材文件名。"
   },
   "portrait_background_images": {
     "description": "竖屏背景图库",
@@ -48,14 +54,14 @@
       "type": "string"
     },
     "default": [],
-    "hint": "上传到竖屏分区的背景图片文件名列表。"
+    "hint": "上传到竖屏分区的背景素材文件名列表。"
   },
   "background_fit": {
     "description": "背景填充方式",
     "type": "string",
     "default": "cover",
     "options": ["cover", "contain", "stretch", "auto"],
-    "hint": "控制背景图片如何填充 WebUI 可视区域。"
+    "hint": "控制背景素材如何填充 WebUI 可视区域。"
   },
   "background_position": {
     "description": "背景位置",

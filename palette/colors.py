@@ -35,7 +35,7 @@ _MAX_SAMPLE_FRAMES = 6
 _MAX_SAMPLE_PIXELS = 60000
 
 
-def extract_theme_colors(image_path: Path) -> ThemeColors:
+def extract_theme_colors(image_path: Path, *, strict: bool = False) -> ThemeColors:
     """从图片中提取适合 AstrBot UI 的主色和辅色。"""
 
     try:
@@ -48,7 +48,9 @@ def extract_theme_colors(image_path: Path) -> ThemeColors:
         ValueError,
         Image.DecompressionBombError,
         Image.DecompressionBombWarning,
-    ):
+    ) as exc:
+        if strict:
+            raise ValueError("素材封面无法读取，不能提取主题色，请重新上传。") from exc
         return DEFAULT_THEME_COLORS
 
     if not candidates:

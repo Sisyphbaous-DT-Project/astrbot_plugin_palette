@@ -1,4 +1,6 @@
 import { initLiquidGlass } from "./liquid-glass.js";
+import { prepareUpload, initMediaPreview } from "./media.js";
+import { initWallpaperImport } from "./wallpaper-import.js";
 
 const bridge = window.AstrBotPluginPage;
 
@@ -13,6 +15,7 @@ const autoThemeInput = document.getElementById("auto-theme-enabled");
 const detailedTokenStatsInput = document.getElementById("detailed-token-stats-enabled");
 const randomBackgroundInput = document.getElementById("random-background-on-load");
 const rotationEnabledInput = document.getElementById("background-rotation-enabled");
+const dynamicBackgroundInput = document.getElementById("dynamic-background-enabled");
 const rotationIntervalInput = document.getElementById("background-rotation-interval");
 const orientationInputs = {
   landscape: document.getElementById("landscape-background-file"),
@@ -74,6 +77,22 @@ const previewCache = new Map();
 const customSelects = new Map();
 let customSelectListenersReady = false;
 const liquidGlass = initLiquidGlass();
+let uploading = false;
+const mediaPreview = initMediaPreview(
+  document.getElementById("media-preview-dialog"),
+  () => {
+    const config = configFromForm();
+    return { ...config, filter: buildBackgroundFilter(config) };
+  },
+  setStatus,
+);
+const wallpaperImport = initWallpaperImport(
+  document.getElementById("wallpaper-import-panel"),
+  async (file, orientation) => {
+    if (!await uploadBackgroundFiles([file], orientation)) throw new Error(statusText.textContent);
+  },
+  setStatus,
+);
 
 function applyThemeFromContext(context) {
   const fallbackTheme = new URLSearchParams(window.location.search).get("theme");
@@ -104,6 +123,8 @@ function activateTab(tabName, focusButton = false) {
   });
 
   customSelects.forEach((_, select) => closeCustomSelect(select));
+  mediaPreview.close();
+  if (tabName !== "gallery") wallpaperImport.close();
   updateTabGlider();
   window.requestAnimationFrame(() => liquidGlass.refreshTargets());
 
@@ -257,6 +278,9 @@ function initCustomSelects(selects) {
     select.addEventListener("change", () => {
       syncCustomSelect(select);
     });
+    // 导入期间原生 select 禁用时，玻璃控件需要同步禁用并收起菜单。
+    new MutationObserver(() => syncCustomSelect(select))
+      .observe(select, { attributes: true, attributeFilter: ["disabled"] });
 
     syncCustomSelect(select);
   });
@@ -303,6 +327,9 @@ function toggleCustomSelect(select) {
 }
 
 function openCustomSelect(select, focusMode = "selected") {
+  if (select.disabled) {
+    return;
+  }
   const state = customSelects.get(select);
   if (!state) {
     return;
@@ -415,6 +442,10 @@ function syncCustomSelect(select) {
   if (!state) {
     return;
   }
+  state.trigger.disabled = select.disabled;
+  if (select.disabled) {
+    closeCustomSelect(select);
+  }
 
   const selectedOption = Array.from(select.options).find((option) => {
     return option.value === select.value;
@@ -443,6 +474,7 @@ function setBusy(isBusy) {
   saveButton.disabled = isBusy;
   refreshButton.disabled = isBusy;
   recalculateThemeButton.disabled = isBusy || !getThemeBackgroundFilename(currentConfig);
+  document.getElementById("open-wallpaper-import").disabled = isBusy;
   Object.values(orientationInputs).forEach((input) => {
     if (input) {
       input.disabled = isBusy;
@@ -530,6 +562,7 @@ function renderList(target, rows) {
 function configFromForm() {
   return {
     enabled: enabledInput.checked,
+    dynamic_background_enabled: dynamicBackgroundInput.checked,
     background_image: currentConfig?.background_image || "",
     background_images: Array.isArray(currentConfig?.background_images)
       ? currentConfig.background_images
@@ -564,6 +597,18 @@ function configFromForm() {
     theme_secondary: currentConfig?.theme_secondary || "",
     advanced_css: advancedCssInput.value,
   };
+}
+
+function configForSave() {
+  const config = configFromForm();
+  // 图库、当前素材和自动取色由专用接口维护，外观保存不能写回旧页面快照。
+  [
+    "background_image", "background_images",
+    "landscape_background_image", "landscape_background_images",
+    "portrait_background_image", "portrait_background_images",
+    "theme_primary", "theme_secondary",
+  ].forEach((key) => delete config[key]);
+  return config;
 }
 
 function getOrientationConfigKeys(orientation) {
@@ -613,6 +658,7 @@ function syncPreviewOrientationButtons() {
 function applyForm(config) {
   currentConfig = { ...config };
   enabledInput.checked = Boolean(config.enabled);
+  dynamicBackgroundInput.checked = config.dynamic_background_enabled !== false;
   fitInput.value = config.background_fit || "cover";
   positionInput.value = config.background_position || "center center";
   blurInput.value = String(config.background_blur ?? 0);
@@ -821,8 +867,9 @@ function renderStatus(status, config) {
   renderList(statusList, [
     ["插件", `${status.plugin?.name || "unknown"} ${status.plugin?.version || ""}`],
     ["美化", config.enabled ? "已启用" : "未启用"],
-    ["横屏图库", `${config.landscape_background_images?.length || 0} 张`],
-    ["竖屏图库", `${config.portrait_background_images?.length || 0} 张`],
+    ["动态背景", config.dynamic_background_enabled !== false ? "开启（遵循系统减少动态效果）" : "静态封面"],
+    ["横屏图库", `${config.landscape_background_images?.length || 0} 项`],
+    ["竖屏图库", `${config.portrait_background_images?.length || 0} 项`],
     ["预览方向", previewOrientation === "portrait" ? "竖屏" : "横屏"],
     ["随机", config.random_background_on_load ? "打开或刷新时随机" : "关闭"],
     ["定时轮换", config.background_rotation_enabled
@@ -833,8 +880,8 @@ function renderStatus(status, config) {
     ["主色", config.theme_primary || "未生成"],
     ["辅色", config.theme_secondary || "未生成"],
     ...injectionRows,
-    ["横屏图片", config.landscape_background_image || "未设置"],
-    ["竖屏图片", config.portrait_background_image || "未设置"],
+    ["横屏素材", config.landscape_background_image || "未设置"],
+    ["竖屏素材", config.portrait_background_image || "未设置"],
   ]);
 }
 
@@ -849,8 +896,8 @@ function renderGallery(config, orientation) {
     const empty = document.createElement("p");
     empty.className = "gallery-empty";
     empty.textContent = orientation === "portrait"
-      ? "竖屏图库里还没有图片。"
-      : "横屏图库里还没有图片。";
+      ? "竖屏图库里还没有素材。"
+      : "横屏图库里还没有素材。";
     gallery.replaceChildren(empty);
     return;
   }
@@ -868,7 +915,7 @@ function renderGallery(config, orientation) {
       selectButton.dataset.galleryAction = "select";
       selectButton.dataset.filename = filename;
       selectButton.dataset.orientation = orientation;
-      selectButton.title = "切换到这张背景";
+      selectButton.title = "切换到此背景";
 
       const image = document.createElement("img");
       image.alt = filename ? `背景缩略图 ${filename}` : "背景缩略图";
@@ -882,7 +929,19 @@ function renderGallery(config, orientation) {
       meta.className = "gallery-meta";
 
       const name = document.createElement("span");
-      name.textContent = filename || "未知图片";
+      name.textContent = filename || "未知素材";
+      const type = document.createElement("small");
+      type.className = "gallery-media-type";
+      type.textContent = { image: "图片", animated_image: "动图", video: "视频", svg: "SVG" }[item.media_type] || "图片";
+      selectButton.append(type);
+      const previewButton = document.createElement("button");
+      previewButton.type = "button";
+      previewButton.className = "gallery-preview";
+      previewButton.classList.add("ghost-button");
+      previewButton.textContent = "预览";
+      previewButton.dataset.galleryAction = "preview";
+      previewButton.dataset.filename = filename;
+      previewButton.dataset.orientation = orientation;
 
       const deleteButton = document.createElement("button");
       deleteButton.className = "gallery-delete";
@@ -890,7 +949,7 @@ function renderGallery(config, orientation) {
       deleteButton.dataset.galleryAction = "delete";
       deleteButton.dataset.filename = filename;
       deleteButton.dataset.orientation = orientation;
-      deleteButton.title = "删除这张背景";
+      deleteButton.title = "删除此背景";
       deleteButton.textContent = "删除";
       deleteButton.classList.toggle(
         "is-confirming",
@@ -900,7 +959,7 @@ function renderGallery(config, orientation) {
         deleteButton.textContent = "确认删除";
       }
 
-      meta.append(name, deleteButton);
+      meta.append(name, previewButton, deleteButton);
       tile.append(selectButton, meta);
       return tile;
     }),
@@ -968,7 +1027,7 @@ async function saveConfig() {
   setBusy(true);
   setStatus("正在保存设置");
   try {
-    const response = await bridge.apiPost("config", configFromForm());
+    const response = await bridge.apiPost("config", configForSave());
     clearLocalPreview();
     applyForm(response.config);
     await loadRemotePreview(response.config);
@@ -982,31 +1041,25 @@ async function saveConfig() {
 }
 
 async function uploadBackgroundFiles(files, orientation) {
-  const imageFiles = Array.from(files || []);
-  if (!imageFiles.length) {
-    return;
+  const mediaFiles = Array.from(files || []);
+  if (!mediaFiles.length || uploading) {
+    return false;
   }
-
+  uploading = true;
+  mediaPreview.close();
   let latestConfig = currentConfig;
   let uploadedCount = 0;
   setBusy(true);
   const orientationLabel = orientation === "portrait" ? "竖屏" : "横屏";
-  setStatus(`正在上传 ${imageFiles.length} 张${orientationLabel}背景图片`);
+  setStatus(`正在上传 ${mediaFiles.length} 项${orientationLabel}背景素材`);
   try {
-    for (const file of imageFiles) {
-      if (!file.type.startsWith("image/")) {
-        throw new Error(`请选择图片文件：${file.name}`);
-      }
-      if (file.size > 10 * 1024 * 1024) {
-        throw new Error(`图片不能超过 10MB：${file.name}`);
-      }
-    }
-
-    for (const file of imageFiles) {
-      const response = await bridge.upload(`upload-background/${orientation}`, file);
+    for (const file of mediaFiles) {
+      setStatus(`正在读取并准备封面：${file.name}`);
+      const upload = await prepareUpload(file);
+      const response = await bridge.upload(`upload-background/${orientation}`, upload);
       latestConfig = response.config;
       uploadedCount += 1;
-      setStatus(`已上传 ${uploadedCount}/${imageFiles.length} 张${orientationLabel}背景图片`);
+      setStatus(`已上传 ${uploadedCount}/${mediaFiles.length} 项${orientationLabel}背景素材`);
     }
     clearLocalPreview();
     previewCache.clear();
@@ -1014,14 +1067,16 @@ async function uploadBackgroundFiles(files, orientation) {
     applyForm(latestConfig);
     await loadRemotePreview(latestConfig);
     notifyPaletteRefresh();
-    setStatus(`已加入${orientationLabel}图库 ${uploadedCount} 张背景图片`, "success");
+    setStatus(`已加入${orientationLabel}图库 ${uploadedCount} 项背景素材`, "success");
+    return true;
   } catch (error) {
     clearLocalPreview();
     if (uploadedCount > 0 && latestConfig) {
       applyForm(latestConfig);
       await loadRemotePreview(latestConfig);
+      notifyPaletteRefresh();
       setStatus(
-        `已加入${orientationLabel}图库 ${uploadedCount} 张，后续图片上传失败：${error?.message || "上传失败"}`,
+        `已加入${orientationLabel}图库 ${uploadedCount} 项，后续素材上传失败：${error?.message || "上传失败"}`,
         "danger",
       );
     } else if (currentConfig) {
@@ -1030,7 +1085,9 @@ async function uploadBackgroundFiles(files, orientation) {
     } else {
       setStatus(error?.message || "上传失败", "danger");
     }
+    return false;
   } finally {
+    uploading = false;
     setBusy(false);
     if (orientationInputs[orientation]) {
       orientationInputs[orientation].value = "";
@@ -1045,7 +1102,7 @@ async function selectBackground(filename, orientation) {
   }
   clearPendingDelete();
   setBusy(true);
-  setStatus("正在切换背景图片");
+  setStatus("正在切换背景素材");
   try {
     const response = await bridge.apiPost("backgrounds/select", {
       background_image: filename,
@@ -1055,7 +1112,7 @@ async function selectBackground(filename, orientation) {
     applyForm(response.config);
     await loadRemotePreview(response.config);
     notifyPaletteRefresh();
-    setStatus(response.message || "背景图片已切换", "success");
+    setStatus(response.message || "背景素材已切换", "success");
   } catch (error) {
     setStatus(error?.message || "切换失败", "danger");
   } finally {
@@ -1073,7 +1130,7 @@ function requestDeleteBackground(filename, orientation) {
     pendingDeleteOrientation = orientation;
     renderGallery(currentConfig || {}, "landscape");
     renderGallery(currentConfig || {}, "portrait");
-    setStatus("再点一次确认删除这张背景图片", "danger");
+    setStatus("再点一次确认删除此背景素材", "danger");
     pendingDeleteTimer = window.setTimeout(() => {
       clearPendingDelete();
       setStatus("已取消删除确认");
@@ -1090,7 +1147,7 @@ async function deleteBackground(filename, orientation) {
   }
   clearPendingDelete();
   setBusy(true);
-  setStatus("正在删除背景图片");
+  setStatus("正在删除背景素材");
   try {
     const response = await bridge.apiPost("backgrounds/delete", {
       background_image: filename,
@@ -1100,7 +1157,7 @@ async function deleteBackground(filename, orientation) {
     applyForm(response.config);
     await loadRemotePreview(response.config);
     notifyPaletteRefresh();
-    setStatus(response.message || "背景图片已删除", "success");
+    setStatus(response.message || "背景素材已删除", "success");
   } catch (error) {
     setStatus(error?.message || "删除失败", "danger");
   } finally {
@@ -1110,7 +1167,7 @@ async function deleteBackground(filename, orientation) {
 
 async function recalculateThemeColors() {
   if (!getThemeBackgroundFilename(currentConfig)) {
-    setStatus("请先上传背景图片", "danger");
+    setStatus("请先上传背景素材", "danger");
     return;
   }
   setBusy(true);
@@ -1130,7 +1187,7 @@ async function recalculateThemeColors() {
 }
 
 refreshButton.addEventListener("click", () => {
-  void loadPaletteState();
+  void loadPaletteState().then(() => notifyPaletteRefresh());
 });
 
 saveButton.addEventListener("click", () => {
@@ -1174,6 +1231,11 @@ Object.values(orientationGalleries).forEach((gallery) => {
       void selectBackground(filename, orientation);
       return;
     }
+    if (button.dataset.galleryAction === "preview") {
+      const item = currentConfig?.[getOrientationConfigKeys(orientation).items]?.find((entry) => entry.filename === filename);
+      if (item) void mediaPreview.open(item);
+      return;
+    }
     if (button.dataset.galleryAction === "delete") {
       requestDeleteBackground(filename, orientation);
     }
@@ -1198,6 +1260,16 @@ previewOrientationButtons.forEach((button) => {
 form.addEventListener("input", () => {
   syncRangeLabels();
   updatePreview();
+  mediaPreview.update();
+});
+dynamicBackgroundInput.addEventListener("change", () => mediaPreview.close());
+document.getElementById("open-wallpaper-import").addEventListener("click", () => {
+  wallpaperImport.open();
+  window.requestAnimationFrame(() => liquidGlass.refreshTargets());
+});
+document.querySelector("[data-close-import]").addEventListener("click", () => {
+  closeCustomSelect(document.getElementById("wallpaper-import-orientation"));
+  window.requestAnimationFrame(() => liquidGlass.refreshTargets());
 });
 
 window.addEventListener("beforeunload", () => {
@@ -1210,5 +1282,8 @@ bridge.onContext((context) => {
 
 applyThemeFromContext();
 initTabs();
-initCustomSelects([fitInput, positionInput, textModeInput]);
+initCustomSelects([
+  fitInput, positionInput, textModeInput,
+  document.getElementById("wallpaper-import-orientation"),
+]);
 void loadPaletteState();

@@ -19,6 +19,11 @@ from .constants import (
 )
 from .paths import PalettePaths
 
+# 动态背景运行时辅助（视频生命周期/静态兜底），内嵌进注入脚本。
+_MEDIA_RUNTIME_JS = (
+    Path(__file__).with_name("media_runtime.js").read_text(encoding="utf-8")
+)
+
 try:
     from astrbot.core.config.default import VERSION as ASTRBOT_VERSION
 except Exception:  # pragma: no cover - 兼容缺少 AstrBot 的环境
@@ -670,8 +675,11 @@ def _build_bootstrap_script(
     random_select_url_json = json.dumps(random_select_url)
     theme_url_json = json.dumps(theme_url)
     token_stats_url_json = json.dumps(token_stats_url)
-    return f"""(function () {{
+    return _MEDIA_RUNTIME_JS + f"""
+(function () {{
     "use strict";
+
+    var PaletteMedia = window.AstrBotPaletteMedia;
 
     var CONFIG_URL = {config_url_json};
     var RANDOM_SELECT_URL = {random_select_url_json};
@@ -698,9 +706,20 @@ def _build_bootstrap_script(
     var ROTATION_LEASE_TTL_MS = 15000;
     var ROTATION_LEASE_RENEW_MS = 5000;
     var MAX_BACKGROUND_OBJECT_URLS = 4;
+    // 除条目数外，缓存还受总字节数约束：整段视频可能接近 100MB，
+    // 不能让多个大视频长期占满内存。
+    var MAX_BACKGROUND_CACHE_BYTES = 128 * 1024 * 1024;
+    var backgroundObjectUrlBytes = new Map();
+    var backgroundVideoUrls = new Set();
+    var backgroundDownloadControllers = new Set();
+    var backgroundPreparationControllers = new Set();
+    var BACKGROUND_DOWNLOAD_TIMEOUT_MS = 60000;
+    var backgroundCacheTotalBytes = 0;
     var lastToken = null;
     var currentBackgroundUrl = "";
     var currentObjectUrl = "";
+    var currentPlaybackKey = "";
+    var currentMediaStatus = "";
     var backgroundObjectUrlCache = new Map();
     var backgroundCacheGeneration = 0;
     var backgroundDecodedUrlCache = {{}};
@@ -726,6 +745,7 @@ def _build_bootstrap_script(
     var tokenStatsLastFetchAt = 0;
     var tokenStatsMutationMuted = false;
     var loading = false;
+    var paletteRefreshGeneration = 0;
     var pendingRefreshOptions = null;
     var initialRandomPending = true;
     var rotationTimer = 0;
@@ -860,10 +880,13 @@ def _build_bootstrap_script(
     }}
 
     function revokeObjectUrls() {{
-      backgroundRequestSeq += 1;
+      cancelBackgroundWork();
       // 递增缓存代数：在途下载完成后发现代数变化必须丢弃，不得把新
       // 对象 URL 重新填入已整体回收的缓存。
       backgroundCacheGeneration += 1;
+      backgroundDownloadControllers.forEach(function (controller) {{ controller.abort(); }});
+      backgroundDownloadControllers.clear();
+      backgroundPreparationControllers.clear();
       backgroundObjectUrlCache.forEach(function (objectUrl) {{
         try {{
           URL.revokeObjectURL(objectUrl);
@@ -871,11 +894,17 @@ def _build_bootstrap_script(
         }}
       }});
       backgroundObjectUrlCache.clear();
+      backgroundObjectUrlBytes.clear();
+      backgroundVideoUrls.clear();
+      backgroundCacheTotalBytes = 0;
       backgroundDecodedUrlCache = {{}};
       backgroundInUseObjectUrls = {{}};
       backgroundInFlightObjectUrls = {{}};
       currentBackgroundUrl = "";
       currentObjectUrl = "";
+      currentPlaybackKey = "";
+      currentMediaStatus = "";
+      backgroundActiveLayer = null;
     }}
 
     function markObjectUrlInUse(objectUrl) {{
@@ -941,7 +970,8 @@ def _build_bootstrap_script(
 
     function evictObjectUrlCache() {{
       // 只淘汰最旧且未受保护的条目；全部受保护时允许临时超过上限。
-      while (backgroundObjectUrlCache.size > MAX_BACKGROUND_OBJECT_URLS) {{
+      // 条目数与总字节数任一超限都要淘汰，防止大视频占满内存。
+      while (true) {{
         var evicted = false;
         for (var entry of backgroundObjectUrlCache) {{
           var url = entry[0];
@@ -949,7 +979,17 @@ def _build_bootstrap_script(
           if (isObjectUrlProtected(objectUrl)) {{
             continue;
           }}
+          if (
+            !backgroundVideoUrls.has(url) &&
+            backgroundObjectUrlCache.size <= MAX_BACKGROUND_OBJECT_URLS &&
+            backgroundCacheTotalBytes <= MAX_BACKGROUND_CACHE_BYTES
+          ) {{
+            continue;
+          }}
           backgroundObjectUrlCache.delete(url);
+          backgroundCacheTotalBytes -= backgroundObjectUrlBytes.get(url) || 0;
+          backgroundObjectUrlBytes.delete(url);
+          backgroundVideoUrls.delete(url);
           if (backgroundDecodedUrlCache[objectUrl]) {{
             delete backgroundDecodedUrlCache[objectUrl];
           }}
@@ -969,6 +1009,11 @@ def _build_bootstrap_script(
     function removeBackgroundContainer() {{
       var container = document.getElementById(BACKGROUND_CONTAINER_ID);
       if (container) {{
+        // 先释放图层视频与引用计数，再移除容器。
+        Array.prototype.forEach.call(
+          container.querySelectorAll(".astrbot-palette-background-layer"),
+          clearLayerMedia,
+        );
         container.remove();
       }}
     }}
@@ -999,11 +1044,67 @@ def _build_bootstrap_script(
       return window.innerHeight > window.innerWidth ? "portrait" : "landscape";
     }}
 
-    function pickBackgroundUrl(config, orientation) {{
-      if (orientation === "portrait") {{
-        return config.portrait_background_url || config.background_url || config.landscape_background_url || config.fallback_background_url || "";
+    function pickBackgroundSource(config, orientation) {{
+      // 背景 URL 与媒体信息同源挑选：URL 优先级保持既有行为，
+      // 媒体信息是服务端公开配置里的同名方向字段。
+      var orders = {{
+        portrait: [
+          ["portrait_background_url", "portrait_background_media"],
+          ["background_url", "background_media"],
+          ["landscape_background_url", "landscape_background_media"],
+          ["fallback_background_url", "fallback_background_media"],
+        ],
+        landscape: [
+          ["landscape_background_url", "landscape_background_media"],
+          ["background_url", "background_media"],
+          ["portrait_background_url", "portrait_background_media"],
+          ["fallback_background_url", "fallback_background_media"],
+        ],
+      }};
+      var order = orientation === "portrait" ? orders.portrait : orders.landscape;
+      for (var index = 0; index < order.length; index += 1) {{
+        if (config[order[index][0]]) {{
+          return {{
+            url: config[order[index][0]],
+            media: config[order[index][1]] || {{}},
+          }};
+        }}
       }}
-      return config.landscape_background_url || config.background_url || config.portrait_background_url || config.fallback_background_url || "";
+      return {{ url: "", media: {{}} }};
+    }}
+
+    function pickBackgroundUrl(config, orientation) {{
+      return pickBackgroundSource(config, orientation).url;
+    }}
+
+    function planBackgroundPlayback(config, media) {{
+      // 决定本次背景的渲染方式。动态开关关闭或系统减少动态时，
+      // 视频/动图/含动画 SVG 回退静态封面；SVG 与动图在允许动态
+      // 时直接作为图片背景，由浏览器原生呈现动画。
+      var dynamicAllowed =
+        config.dynamic_background_enabled !== false &&
+        !PaletteMedia.prefersReducedMotion();
+      var mediaType = media && media.media_type ? media.media_type : "image";
+      var coverUrl = media && media.cover_url ? media.cover_url : "";
+      if (mediaType === "video") {{
+        if (dynamicAllowed) {{
+          return {{ kind: "video", coverUrl: coverUrl, play: true }};
+        }}
+        if (coverUrl) {{
+          return {{ kind: "image", coverUrl: coverUrl, play: false }};
+        }}
+        return {{ kind: "unavailable", coverUrl: "", play: false }};
+      }}
+      if (
+        (mediaType === "animated_image" || mediaType === "svg") &&
+        !dynamicAllowed
+      ) {{
+        if (!coverUrl) {{
+          return {{ kind: "unavailable", coverUrl: "", play: false }};
+        }}
+        return {{ kind: "image", coverUrl: coverUrl, play: false }};
+      }}
+      return {{ kind: "image", coverUrl: "", play: false }};
     }}
 
     function nextBackgroundFrame() {{
@@ -1032,22 +1133,34 @@ def _build_bootstrap_script(
       if (backgroundDecodedUrlCache[objectUrl]) {{
         return backgroundDecodedUrlCache[objectUrl];
       }}
-      var promise = new Promise(function (resolve) {{
+      var promise = new Promise(function (resolve, reject) {{
         var image = new Image();
+        var timer = window.setTimeout(function () {{
+          image.onload = image.onerror = null;
+          reject(new Error("背景图片解码超时。"));
+        }}, 10000);
         var done = function () {{
+          window.clearTimeout(timer);
           resolve();
         }};
         image.onload = function () {{
           if (image.decode) {{
-            image.decode().then(done).catch(done);
+            image.decode().then(done).catch(function (error) {{
+              window.clearTimeout(timer);
+              reject(error);
+            }});
           }} else {{
             done();
           }}
         }};
-        image.onerror = done;
+        image.onerror = function () {{
+          window.clearTimeout(timer);
+          reject(new Error("背景图片无法解码。"));
+        }};
         image.src = objectUrl;
       }});
       backgroundDecodedUrlCache[objectUrl] = promise;
+      promise.catch(function () {{ delete backgroundDecodedUrlCache[objectUrl]; }});
       return promise;
     }}
 
@@ -1067,7 +1180,109 @@ def _build_bootstrap_script(
       layer.style.backgroundImage = nextUrl ? 'url("' + nextUrl + '")' : "none";
     }}
 
-    async function applyBackgroundLayer(objectUrl, animate, isCurrent) {{
+    function setLayerVideo(layer, videoState) {{
+      // 图层的视频子元素与背景图分离管理：视频 URL 同样纳入
+      // 引用计数保护；同一 URL 重复设置时复用元素，不重建播放。
+      var current = layer.__paletteVideoState || null;
+      if (current && (!videoState || current.objectUrl !== videoState.objectUrl)) {{
+        PaletteMedia.destroyLayerVideo(current.element);
+        unmarkObjectUrlInUse(current.objectUrl);
+        layer.__paletteVideoState = null;
+        current = null;
+      }}
+      if (videoState) {{
+        if (!current) {{
+          layer.appendChild(videoState.element);
+          markObjectUrlInUse(videoState.objectUrl);
+          layer.__paletteVideoState = {{
+            objectUrl: videoState.objectUrl,
+            element: videoState.element,
+            play: false,
+          }};
+          current = layer.__paletteVideoState;
+        }} else if (videoState.element !== current.element) {{
+          PaletteMedia.destroyLayerVideo(videoState.element);
+        }}
+        current.play = Boolean(videoState.play);
+        syncLayerVideoPlayback(layer);
+      }}
+    }}
+
+    function syncLayerVideoPlayback(layer) {{
+      // 页面隐藏时暂停背景视频；恢复可见后继续播放。
+      var state = layer.__paletteVideoState;
+      if (!state) {{
+        return;
+      }}
+      if (!state.play || document.hidden) {{
+        // 先使旧播放申请失效，再暂停；旧 Promise 的 AbortError 不能
+        // 覆盖恢复可见后新申请的结果。
+        state.playRequestSeq = (state.playRequestSeq || 0) + 1;
+        state.playPending = false;
+        PaletteMedia.pauseVideo(state.element);
+        return;
+      }}
+      if (state.failed || state.playPending || !state.element.paused) {{
+        return;
+      }}
+      var playRequestSeq = (state.playRequestSeq || 0) + 1;
+      state.playRequestSeq = playRequestSeq;
+      state.playPending = true;
+      PaletteMedia.playVideo(state.element).then(function (ok) {{
+        if (
+          layer.__paletteVideoState !== state ||
+          state.playRequestSeq !== playRequestSeq
+        ) {{
+          return;
+        }}
+        state.playPending = false;
+        if (!state.play || document.hidden || ok === null) {{
+          return;
+        }}
+        state.failed = ok === false;
+        state.element.style.visibility = state.failed ? "hidden" : "";
+        if (state.failed) {{
+          PaletteMedia.pauseVideo(state.element);
+        }}
+        if (layer === backgroundActiveLayer) {{
+          currentMediaStatus = state.failed ? "static_fallback" : "video_ready";
+        }}
+      }});
+    }}
+
+    function retryLayerVideo(layer) {{
+      if (layer && layer.__paletteVideoState) {{
+        layer.__paletteVideoState.failed = false;
+        syncLayerVideoPlayback(layer);
+      }}
+    }}
+
+    function syncBackgroundVideoVisibility() {{
+      var container = document.getElementById(BACKGROUND_CONTAINER_ID);
+      if (!container) {{
+        return;
+      }}
+      Array.prototype.forEach.call(
+        container.querySelectorAll(".astrbot-palette-background-layer"),
+        syncLayerVideoPlayback,
+      );
+    }}
+
+    function setLayerMedia(layer, presentation) {{
+      setLayerObjectUrl(layer, presentation.imageUrl || "");
+      setLayerVideo(layer, presentation.video || null);
+    }}
+
+    function clearLayerMedia(layer) {{
+      setLayerObjectUrl(layer, "");
+      setLayerVideo(layer, null);
+    }}
+
+    function emptyPresentation() {{
+      return {{ imageUrl: "", video: null }};
+    }}
+
+    async function applyBackgroundLayer(presentation, animate, isCurrent) {{
       var container = ensureBackgroundContainer();
       var layers = container.querySelectorAll(".astrbot-palette-background-layer");
       if (layers.length < 2) {{
@@ -1089,7 +1304,7 @@ def _build_bootstrap_script(
           return false;
         }});
       }}
-      setLayerObjectUrl(nextLayer, objectUrl);
+      setLayerMedia(nextLayer, presentation);
       if (animate && currentLayer && currentLayer !== nextLayer) {{
         var transitionToken = backgroundTransitionToken + 1;
         backgroundTransitionToken = transitionToken;
@@ -1102,7 +1317,7 @@ def _build_bootstrap_script(
           (isCurrent && !isCurrent())
         ) {{
           nextLayer.classList.remove("is-active");
-          setLayerObjectUrl(nextLayer, "");
+          clearLayerMedia(nextLayer);
           evictObjectUrlCache();
           return false;
         }}
@@ -1114,7 +1329,7 @@ def _build_bootstrap_script(
             backgroundTransitionToken === transitionToken &&
             !currentLayer.classList.contains("is-active")
           ) {{
-            setLayerObjectUrl(currentLayer, "");
+            clearLayerMedia(currentLayer);
           }}
           evictObjectUrlCache();
         }}, 760);
@@ -1125,7 +1340,7 @@ def _build_bootstrap_script(
           var isNextLayer = layer === nextLayer;
           layer.classList.toggle("is-active", isNextLayer);
           if (!isNextLayer) {{
-            setLayerObjectUrl(layer, "");
+            clearLayerMedia(layer);
           }}
         }});
         backgroundActiveLayer = nextLayer;
@@ -1141,6 +1356,7 @@ def _build_bootstrap_script(
       [
         "--astrbot-palette-background-image",
         "--astrbot-palette-background-fit",
+        "--astrbot-palette-video-fit",
         "--astrbot-palette-background-position",
         "--astrbot-palette-background-blur",
         "--astrbot-palette-background-dim",
@@ -1372,6 +1588,7 @@ def _build_bootstrap_script(
       var root = document.documentElement;
       root.style.setProperty("--astrbot-palette-background-image", imageUrl ? 'url("' + imageUrl + '")' : "none");
       root.style.setProperty("--astrbot-palette-background-fit", normalizeFit(config.background_fit));
+      root.style.setProperty("--astrbot-palette-video-fit", PaletteMedia.videoObjectFit(config.background_fit));
       root.style.setProperty("--astrbot-palette-background-position", config.background_position || "center center");
       var backgroundBlur = clampNumber(config.background_blur, 0, 40, 0);
       root.style.setProperty("--astrbot-palette-background-blur", backgroundBlur + "px");
@@ -1722,7 +1939,51 @@ def _build_bootstrap_script(
       return response.json();
     }}
 
+    function cancelBackgroundWork() {{
+      backgroundRequestSeq += 1;
+      backgroundDownloadControllers.forEach(function (controller) {{ controller.abort(); }});
+      backgroundPreparationControllers.forEach(function (controller) {{ controller.abort(); }});
+    }}
+
+    function invalidatePaletteRefresh() {{
+      // 配置失效和页面生命周期共用代次，等待 GET/CSS/POST 的旧流程也必须作废。
+      paletteRefreshGeneration += 1;
+      cancelBackgroundWork();
+    }}
+
+    function isPaletteRefreshCurrent(generation) {{
+      return generation === paletteRefreshGeneration &&
+        document.visibilityState === "visible";
+    }}
+
+    function waitForBackgroundPreparation(promise, signal) {{
+      // 解码/播放准备也能被配置失效取消，不能下载完成后再等整段超时。
+      return new Promise(function (resolve, reject) {{
+        var finish = function (error, value) {{
+          signal.removeEventListener("abort", onAbort);
+          if (error) {{
+            reject(error);
+          }} else {{
+            resolve(value);
+          }}
+        }};
+        var onAbort = function () {{
+          finish(new DOMException("背景准备已取消。", "AbortError"));
+        }};
+        if (signal.aborted) {{
+          onAbort();
+          return;
+        }}
+        signal.addEventListener("abort", onAbort, {{ once: true }});
+        Promise.resolve(promise).then(
+          function (value) {{ finish(null, value); }},
+          function (error) {{ finish(error); }}
+        );
+      }});
+    }}
+
     async function fetchBackground(url, token) {{
+      var accept = arguments[2] || "image/*";
       if (!url) {{
         return "";
       }}
@@ -1734,15 +1995,47 @@ def _build_bootstrap_script(
         markObjectUrlInFlight(cachedObjectUrl);
         return cachedObjectUrl;
       }}
-      var response = await fetch(withCacheBust(url), {{
+      var controller = new AbortController();
+      backgroundDownloadControllers.add(controller);
+      var downloadTimedOut = false;
+      var downloadTimer = window.setTimeout(function () {{
+        downloadTimedOut = true;
+        controller.abort();
+      }}, BACKGROUND_DOWNLOAD_TIMEOUT_MS);
+      var response;
+      var blob;
+      try {{
+      response = await fetch(withCacheBust(url), {{
         cache: "no-store",
         credentials: "same-origin",
-        headers: buildHeaders(token, "image/*"),
+        headers: buildHeaders(token, accept),
+        signal: controller.signal,
       }});
       if (!response.ok) {{
         throw new Error("HTTP " + response.status);
       }}
-      var blob = await response.blob();
+      var declaredSize = Number(response.headers.get("Content-Length")) || 0;
+      var downloadLimit = accept === "video/*" ? 100 * 1024 * 1024 : 10 * 1024 * 1024;
+      if (declaredSize > downloadLimit) {{
+        controller.abort();
+        throw new Error("背景素材超过下载大小限制。");
+      }}
+      blob = await response.blob();
+      if (blob.size > downloadLimit) {{
+        throw new Error("背景素材超过下载大小限制。");
+      }}
+      }} catch (error) {{
+        if (downloadTimedOut) {{
+          throw new Error("背景素材下载超时，请检查网络后刷新重试。");
+        }}
+        throw error;
+      }} finally {{
+        window.clearTimeout(downloadTimer);
+        backgroundDownloadControllers.delete(controller);
+      }}
+      if (controller.signal.aborted) {{
+        throw new DOMException("背景下载已取消。", "AbortError");
+      }}
       // 并发请求同一 URL 时，后完成的一方在此复查缓存：已有胜出者直接
       // 复用（同样持有在途标记），避免创建无人回收的孤儿 object URL。
       var winnerObjectUrl = getCachedObjectUrl(url);
@@ -1757,6 +2050,11 @@ def _build_bootstrap_script(
       }}
       var objectUrl = URL.createObjectURL(blob);
       backgroundObjectUrlCache.set(url, objectUrl);
+      backgroundObjectUrlBytes.set(url, blob.size || 0);
+      backgroundCacheTotalBytes += blob.size || 0;
+      if (accept === "video/*") {{
+        backgroundVideoUrls.add(url);
+      }}
       // 成功返回时持有在途标记并随 URL 移交调用方：淘汰、解码与落层
       // 全程受保护，不存在未保护窗口；调用方在 finally 中统一解除。
       markObjectUrlInFlight(objectUrl);
@@ -1764,28 +2062,183 @@ def _build_bootstrap_script(
       return objectUrl;
     }}
 
+    function currentPresentation() {{
+      // 同一素材的普通刷新复用当前图层内容，不重建播放元素。
+      var layer = backgroundActiveLayer;
+      if (!layer) {{
+        return {{ imageUrl: currentObjectUrl, video: null }};
+      }}
+      var videoState = layer.__paletteVideoState || null;
+      return {{
+        imageUrl: layer.__paletteObjectUrl || "",
+        video: videoState
+          ? {{
+              objectUrl: videoState.objectUrl,
+              element: videoState.element,
+              play: videoState.play,
+            }}
+          : null,
+      }};
+    }}
+
+    async function applyVideoBackground(config, token, animate, backgroundUrl, plan, orientation, stillCurrent, playbackKey) {{
+      // 视频背景：整段下载（带登录态）→ 等首帧 → 落层叠化。
+      // 封面垫底：播放失败或关闭动态时仍能显示静态画面。
+      var videoObjectUrl = "";
+      var coverObjectUrl = "";
+      var videoElement = null;
+      var preparationAbort = new AbortController();
+      backgroundPreparationControllers.add(preparationAbort);
+      try {{
+        if (plan.coverUrl) {{
+          try {{
+            coverObjectUrl = await fetchBackground(plan.coverUrl, token);
+            await waitForBackgroundPreparation(
+              decodeBackgroundImage(coverObjectUrl), preparationAbort.signal
+            );
+          }} catch (_) {{
+            // 封面拉取失败不阻断视频本身。
+            unmarkObjectUrlInFlight(coverObjectUrl);
+            coverObjectUrl = "";
+          }}
+        }}
+        if (!stillCurrent()) {{
+          return currentObjectUrl || "";
+        }}
+        var videoReady = true;
+        try {{
+          videoObjectUrl = await fetchBackground(backgroundUrl, token, "video/*");
+          videoElement = PaletteMedia.createLayerVideo(document);
+          videoElement.src = videoObjectUrl;
+          videoElement.load();
+          await PaletteMedia.waitForFirstFrame(videoElement, undefined, preparationAbort.signal);
+          if (plan.play && !document.hidden) {{
+            videoReady = (await waitForBackgroundPreparation(
+              PaletteMedia.playVideo(videoElement), preparationAbort.signal
+            )) !== false;
+          }}
+        }} catch (_) {{
+          videoReady = false;
+        }}
+        if (!stillCurrent()) {{
+          return currentObjectUrl || "";
+        }}
+        if (!videoReady && currentObjectUrl) {{
+          throw new Error("新视频播放失败，保留原背景。");
+        }}
+        if (!videoReady && !coverObjectUrl) {{
+          throw new Error("视频及静态封面均不可用。");
+        }}
+        if (videoReady) {{
+          var videoForErrors = videoElement;
+          videoElement.__paletteErrorHandler = function () {{
+            videoForErrors.style.visibility = "hidden";
+            PaletteMedia.pauseVideo(videoForErrors);
+            if (videoForErrors.parentNode && videoForErrors.parentNode.__paletteVideoState) {{
+              var failedState = videoForErrors.parentNode.__paletteVideoState;
+              failedState.failed = true;
+              failedState.playRequestSeq = (failedState.playRequestSeq || 0) + 1;
+              failedState.playPending = false;
+              if (videoForErrors.parentNode === backgroundActiveLayer) {{
+                currentMediaStatus = "static_fallback";
+              }}
+            }}
+          }};
+          videoElement.addEventListener("error", videoElement.__paletteErrorHandler);
+        }}
+        var presentation = videoReady
+          ? {{
+              imageUrl: coverObjectUrl,
+              video: {{
+                objectUrl: videoObjectUrl,
+                element: videoElement,
+                play: plan.play,
+              }},
+            }}
+          : {{ imageUrl: coverObjectUrl, video: null }};
+        var applied = await applyBackgroundLayer(presentation, Boolean(animate), stillCurrent);
+        if (!applied) {{
+          return currentObjectUrl || "";
+        }}
+        // 元素所有权已移交图层，不再由本函数销毁。
+        if (videoReady) {{
+          videoElement = null;
+        }}
+        currentBackgroundUrl = backgroundUrl;
+        currentPlaybackKey = playbackKey;
+        currentMediaStatus = videoReady ? "video_ready" : "static_fallback";
+        currentObjectUrl = videoReady ? videoObjectUrl : coverObjectUrl;
+        lastAppliedOrientation = orientation;
+        applyConfig(config, coverObjectUrl || videoObjectUrl);
+        return currentObjectUrl;
+      }} finally {{
+        backgroundPreparationControllers.delete(preparationAbort);
+        if (videoElement) {{
+          PaletteMedia.destroyLayerVideo(videoElement);
+        }}
+        unmarkObjectUrlInFlight(videoObjectUrl);
+        unmarkObjectUrlInFlight(coverObjectUrl);
+        evictObjectUrlCache();
+      }}
+    }}
+
     async function applyDirectionalBackground(config, token, animate) {{
-      var requestSeq = backgroundRequestSeq + 1;
-      backgroundRequestSeq = requestSeq;
+      if (document.visibilityState !== "visible") {{
+        return currentObjectUrl || "";
+      }}
+      var retryFailedMedia = Boolean(arguments[3]);
+      cancelBackgroundWork();
+      var requestSeq = backgroundRequestSeq;
       var orientation = getViewportOrientation();
-      var backgroundUrl = pickBackgroundUrl(config, orientation);
+      var source = pickBackgroundSource(config, orientation);
+      var backgroundUrl = source.url;
+      var plan = planBackgroundPlayback(config, source.media);
+      var playbackKey = backgroundUrl + "|" + plan.kind + "|" + plan.coverUrl;
       if (!backgroundUrl) {{
         currentBackgroundUrl = "";
         currentObjectUrl = "";
-        await applyBackgroundLayer("", false);
+        currentPlaybackKey = "";
+        currentMediaStatus = "";
+        await applyBackgroundLayer(emptyPresentation(), false);
         lastAppliedOrientation = orientation;
         applyConfig(config, "");
         return "";
       }}
-      if (backgroundUrl === currentBackgroundUrl && currentObjectUrl) {{
-        await applyBackgroundLayer(currentObjectUrl, false);
-        lastAppliedOrientation = orientation;
-        applyConfig(config, currentObjectUrl);
-        return currentObjectUrl;
+      if (playbackKey === currentPlaybackKey && currentObjectUrl) {{
+        var presentation = currentPresentation();
+        var shouldRetry = retryFailedMedia && plan.kind === "video" &&
+          currentMediaStatus === "static_fallback";
+        if (!shouldRetry || presentation.video) {{
+          // 正常播放复用元素与进度；真实失败只在明确恢复时机重试。
+          if (shouldRetry) {{
+            retryLayerVideo(backgroundActiveLayer);
+          }}
+          await applyBackgroundLayer(presentation, false);
+          lastAppliedOrientation = orientation;
+          applyConfig(config, currentObjectUrl);
+          return currentObjectUrl;
+        }}
+        // 首次回退只有封面，不能把该状态当成已经成功准备的视频。
       }}
+      var stillCurrent = function () {{
+        return (
+          requestSeq === backgroundRequestSeq &&
+          pickBackgroundUrl(config, getViewportOrientation()) === backgroundUrl
+        );
+      }};
+      if (plan.kind === "unavailable") {{
+        throw new Error("该动态素材缺少静态封面。");
+      }}
+      if (plan.kind === "video") {{
+        return await applyVideoBackground(
+          config, token, animate, backgroundUrl, plan, orientation, stillCurrent, playbackKey
+        );
+      }}
+      // 静态兜底：关闭动态时用封面替换动图/含动画 SVG。
+      var fetchUrl = plan.coverUrl || backgroundUrl;
       var imageUrl = "";
       try {{
-        imageUrl = await fetchBackground(backgroundUrl, token);
+        imageUrl = await fetchBackground(fetchUrl, token);
       }} catch (error) {{
         if (requestSeq !== backgroundRequestSeq) {{
           return currentObjectUrl || "";
@@ -1794,36 +2247,38 @@ def _build_bootstrap_script(
       }}
       // fetchBackground 成功返回时已持有在途标记；失败路径未标记，
       // 不会进入这里。finally 统一解除，任何出口都不残留计数。
+      var imagePreparationAbort = new AbortController();
+      backgroundPreparationControllers.add(imagePreparationAbort);
       try {{
-        await decodeBackgroundImage(imageUrl);
-        if (
-          requestSeq !== backgroundRequestSeq ||
-          pickBackgroundUrl(config, getViewportOrientation()) !== backgroundUrl
-        ) {{
+        await waitForBackgroundPreparation(
+          decodeBackgroundImage(imageUrl), imagePreparationAbort.signal
+        );
+        if (!stillCurrent()) {{
           return currentObjectUrl || "";
         }}
-        var applied = await applyBackgroundLayer(imageUrl, Boolean(animate), function () {{
-          return (
-            requestSeq === backgroundRequestSeq &&
-            pickBackgroundUrl(config, getViewportOrientation()) === backgroundUrl
-          );
-        }});
+        var applied = await applyBackgroundLayer({{ imageUrl: imageUrl, video: null }}, Boolean(animate), stillCurrent);
         if (!applied) {{
           return currentObjectUrl || "";
         }}
         currentBackgroundUrl = backgroundUrl;
+        currentPlaybackKey = playbackKey;
+        currentMediaStatus = "image_ready";
         currentObjectUrl = imageUrl;
         lastAppliedOrientation = orientation;
         applyConfig(config, imageUrl);
         return imageUrl;
       }} finally {{
+        backgroundPreparationControllers.delete(imagePreparationAbort);
         unmarkObjectUrlInFlight(imageUrl);
         evictObjectUrlCache();
       }}
     }}
 
-    async function resolveConfigForRefresh(token, allowInitialRandom) {{
+    async function resolveConfigForRefresh(token, allowInitialRandom, refreshGeneration) {{
       var config = await fetchJson(CONFIG_URL, token);
+      if (!isPaletteRefreshCurrent(refreshGeneration)) {{
+        return config;
+      }}
       var orientation = getViewportOrientation();
       var orientationImages = orientation === "portrait"
         ? config.portrait_background_images
@@ -1856,7 +2311,9 @@ def _build_bootstrap_script(
             orientation: orientation,
           }});
           if (randomResponse && randomResponse.config) {{
-            initialRandomJustApplied = true;
+            if (isPaletteRefreshCurrent(refreshGeneration)) {{
+              initialRandomJustApplied = true;
+            }}
             return randomResponse.config;
           }}
         }} catch (error) {{
@@ -1873,6 +2330,9 @@ def _build_bootstrap_script(
 
     async function applyResolvedConfig(config, token, options) {{
       // 普通刷新与定时轮换共用的“应用已解析配置”流程：CSS、状态、背景与主题色。
+      if (!isPaletteRefreshCurrent(options.refreshGeneration)) {{
+        return;
+      }}
       if (!config.enabled) {{
         setInactive();
         removeStyleElement();
@@ -1880,15 +2340,22 @@ def _build_bootstrap_script(
       }}
 
       var css = await fetchText(THEME_URL, token);
+      if (!isPaletteRefreshCurrent(options.refreshGeneration)) {{
+        return;
+      }}
       ensureStyleElement(css);
       lastConfig = config;
       try {{
         await applyDirectionalBackground(
           config,
           token,
-          Boolean(options && options.animateBackground)
+          Boolean(options && options.animateBackground),
+          Boolean(options && options.retryFailedMedia)
         );
       }} catch (error) {{
+        if (!isPaletteRefreshCurrent(options.refreshGeneration)) {{
+          return;
+        }}
         if (!currentObjectUrl) {{
           setInactive();
           removeStyleElement();
@@ -1907,6 +2374,9 @@ def _build_bootstrap_script(
         }}
         if (extra.allowInitialRandom) {{
           merged.allowInitialRandom = true;
+        }}
+        if (extra.retryFailedMedia) {{
+          merged.retryFailedMedia = true;
         }}
       }}
       return merged;
@@ -1947,11 +2417,21 @@ def _build_bootstrap_script(
     }}
 
     async function refreshPalette(options) {{
+      if (options && options.invalidateMedia) {{
+        // 配置失效消息立即取消旧媒体准备；仍经 loading 唯一出口重放，
+        // 不并发应用两份配置，也不移除已成功显示的背景。
+        invalidatePaletteRefresh();
+      }}
+      // 隐藏期间不启动新刷新，恢复可见时统一读取最新配置。
+      if (document.visibilityState !== "visible") {{
+        return;
+      }}
       if (loading) {{
         pendingRefreshOptions = mergeRefreshOptions(pendingRefreshOptions, options);
         return;
       }}
       loading = true;
+      var refreshGeneration = paletteRefreshGeneration;
       // 重排判定只依赖配置 GET 成功，与后续视觉应用成败解耦。
       var scheduleSyncNeeded = false;
       try {{
@@ -1960,8 +2440,12 @@ def _build_bootstrap_script(
         var previousConfig = lastConfig;
         var config = await resolveConfigForRefresh(
           token,
-          Boolean(options && options.allowInitialRandom) || initialRandomPending
+          Boolean(options && options.allowInitialRandom) || initialRandomPending,
+          refreshGeneration
         );
+        if (!isPaletteRefreshCurrent(refreshGeneration)) {{
+          return;
+        }}
 
         // 调度以最新配置为准：GET 成功即更新 lastConfig，主题 CSS 或
         // 图片应用失败也不让轮换协调（含领导权获权回调）回退到旧配置。
@@ -1970,12 +2454,17 @@ def _build_bootstrap_script(
 
         await applyResolvedConfig(config, token, {{
           animateBackground: Boolean(options && options.animateBackground),
+          retryFailedMedia: Boolean(options && options.retryFailedMedia),
+          refreshGeneration: refreshGeneration,
         }});
         if (initialRandomJustApplied) {{
           initialRandomJustApplied = false;
           broadcastSync("config-refresh");
         }}
       }} catch (error) {{
+        if (!isPaletteRefreshCurrent(refreshGeneration)) {{
+          return;
+        }}
         if (!currentObjectUrl) {{
           setInactive();
           removeStyleElement();
@@ -1986,7 +2475,7 @@ def _build_bootstrap_script(
       }} finally {{
         // 图片下载或落层失败也要按新配置重排轮换计时，不能漏掉
         // 手动换图后的完整间隔；配置 GET 失败时标志为 false，不误重排。
-        if (scheduleSyncNeeded) {{
+        if (scheduleSyncNeeded && isPaletteRefreshCurrent(refreshGeneration)) {{
           syncRotationSchedule();
         }}
         releaseLoadingAndReplay();
@@ -2324,10 +2813,14 @@ def _build_bootstrap_script(
       // 并用旧配置回退 lastConfig 与视觉背景。
       loading = true;
       rotationInFlight = true;
+      var rotationRefreshGeneration = paletteRefreshGeneration;
       try {{
         var token = getToken();
         lastToken = token;
         var config = await fetchJson(CONFIG_URL, token);
+        if (!isPaletteRefreshCurrent(rotationRefreshGeneration)) {{
+          return;
+        }}
         if (!config.enabled || !config.background_rotation_enabled) {{
           lastConfig = config;
           syncRotationSchedule();
@@ -2343,18 +2836,24 @@ def _build_bootstrap_script(
           orientation: orientation,
           scheduled: true,
         }});
+        if (!isPaletteRefreshCurrent(rotationRefreshGeneration)) {{
+          return;
+        }}
         if (
           response &&
           response.config &&
           response.config.enabled &&
           pickBackgroundUrl(response.config, orientation) !== previousUrl
         ) {{
-          await applyResolvedConfig(response.config, token, {{ animateBackground: true }});
+          await applyResolvedConfig(response.config, token, {{
+            animateBackground: true,
+            refreshGeneration: rotationRefreshGeneration,
+          }});
           broadcastSync("rotation-complete");
         }}
       }} catch (error) {{
         // 失败后保留当前壁纸，等待下一个完整间隔重试。
-        if (!isExpectedAuthFailure(error)) {{
+        if (isPaletteRefreshCurrent(rotationRefreshGeneration) && !isExpectedAuthFailure(error)) {{
           console.warn("[AstrBot调色盘] 定时轮换背景失败：", error);
         }}
       }} finally {{
@@ -2408,7 +2907,7 @@ def _build_bootstrap_script(
         return;
       }}
       // 不信任消息携带的状态，统一重新拉取最终配置。
-      refreshPalette({{ animateBackground: true }});
+      refreshPalette({{ animateBackground: true, invalidateMedia: true }});
     }}
 
     function setupPaletteSync() {{
@@ -2424,20 +2923,24 @@ def _build_bootstrap_script(
       }}
     }}
 
+    PaletteMedia.attachPreviewBridge(window, getToken);
     window.addEventListener("message", function (event) {{
-      if (event.origin !== window.location.origin) {{
+      if (
+        event.origin !== window.location.origin &&
+        !PaletteMedia.isPaletteSettingsMessage(event, window)
+      ) {{
         return;
       }}
       if (event && event.data && event.data.type === "astrbot-palette:refresh") {{
         // 设置页保存后由本页先刷新，再广播给其他同源标签页。
-        refreshPalette().then(function () {{
+        refreshPalette({{ invalidateMedia: true, retryFailedMedia: true }}).then(function () {{
           broadcastSync("config-refresh");
         }});
       }}
     }});
     window.addEventListener("storage", function (event) {{
       if (!event || event.key === "token") {{
-        refreshPalette();
+        refreshPalette({{ invalidateMedia: true }});
         return;
       }}
       if (event.key === SYNC_EVENT_KEY && event.newValue) {{
@@ -2448,18 +2951,33 @@ def _build_bootstrap_script(
       }}
     }});
     window.addEventListener("visibilitychange", function () {{
+      syncBackgroundVideoVisibility();
       if (document.visibilityState === "visible") {{
-        refreshPalette();
+        refreshPalette({{ retryFailedMedia: true }});
         syncRotationSchedule();
         return;
       }}
       // 页面隐藏时暂停轮播，不补播错过次数。
+      invalidatePaletteRefresh();
+      window.clearTimeout(backgroundResizeTimer);
       stopRotation();
       void releaseLeadership();
     }});
     window.addEventListener("hashchange", refreshPalette);
+    window.addEventListener("online", function () {{
+      refreshPalette({{ retryFailedMedia: true }});
+    }});
+    if (window.matchMedia) {{
+      var motionQuery = window.matchMedia("(prefers-reduced-motion: reduce)");
+      var onMotionChange = function () {{ refreshPalette({{ invalidateMedia: true }}); }};
+      if (motionQuery.addEventListener) {{
+        motionQuery.addEventListener("change", onMotionChange);
+      }} else if (motionQuery.addListener) {{
+        motionQuery.addListener(onMotionChange);
+      }}
+    }}
     function scheduleDirectionalBackgroundRefresh() {{
-      if (!lastConfig || !lastConfig.enabled) {{
+      if (document.visibilityState !== "visible" || !lastConfig || !lastConfig.enabled) {{
         return;
       }}
       window.clearTimeout(backgroundResizeTimer);
@@ -2490,11 +3008,22 @@ def _build_bootstrap_script(
     }} catch (_) {{
     }}
     window.addEventListener("pagehide", function () {{
+      invalidatePaletteRefresh();
+      window.clearTimeout(backgroundResizeTimer);
       stopRotation();
       void releaseLeadership();
+      removeBackgroundContainer();
+      revokeObjectUrls();
+    }});
+    window.addEventListener("pageshow", function (event) {{
+      if (event.persisted) {{
+        refreshPalette();
+      }}
     }});
     window.addEventListener("beforeunload", function () {{
+      invalidatePaletteRefresh();
       stopRotation();
+      removeBackgroundContainer();
       revokeObjectUrls();
     }});
 
@@ -2502,7 +3031,7 @@ def _build_bootstrap_script(
       dropRestoredThemeStyleIfUserChangedColors();
       var token = getToken();
       if (token !== lastToken) {{
-        refreshPalette();
+        refreshPalette({{ invalidateMedia: true }});
       }}
     }}, 1500);
 

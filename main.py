@@ -1,14 +1,15 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 import random
 from contextlib import suppress
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
+from functools import wraps
 from pathlib import Path
 from typing import Any, Mapping, MutableMapping
 from urllib.parse import quote
-from uuid import uuid4
 
 from sqlmodel import col, select
 
@@ -25,10 +26,23 @@ from .palette.constants import (
     ALLOWED_BACKGROUND_EXTENSIONS,
     AUTHOR,
     DESCRIPTION,
-    MAX_BACKGROUND_BYTES,
     PLUGIN_NAME,
     ROUTE_PREFIX,
     VERSION,
+)
+from .palette.media import (
+    MEDIA_TYPE_ANIMATED,
+    MEDIA_TYPE_SVG,
+    MEDIA_TYPE_VIDEO,
+    build_cover_from_animated_image,
+    cover_content_type,
+    delete_background_cover,
+    find_cover,
+    is_animated_image,
+    media_type_for_filename,
+    probe_media_type,
+    save_background_upload,
+    save_cover_image,
 )
 from .palette.colors import extract_theme_colors, normalize_hex_color
 from .palette.injector import ensure_dashboard_injection
@@ -43,6 +57,17 @@ BACKGROUND_ORIENTATIONS = {"landscape", "portrait"}
 BACKGROUND_POOLS = {"legacy", *BACKGROUND_ORIENTATIONS}
 
 
+def _serialized_config_update(handler):
+    """串行处理共享配置的读取和保存，防止线程等待期间快照互相覆盖。"""
+
+    @wraps(handler)
+    async def serialized(self, *args, **kwargs):
+        async with self._config_lock:
+            return await handler(self, *args, **kwargs)
+
+    return serialized
+
+
 @register(PLUGIN_NAME, AUTHOR, DESCRIPTION, VERSION)
 class PalettePlugin(Star):
     """AstrBot 调色盘插件入口。"""
@@ -50,6 +75,7 @@ class PalettePlugin(Star):
     def __init__(self, context: Context, config: Mapping[str, Any] | None = None) -> None:
         super().__init__(context)
         self.config: Mapping[str, Any] = config if config is not None else {}
+        self._config_lock = asyncio.Lock()
         self.paths = PalettePaths()
         self.injection_status = ensure_dashboard_injection(self.paths)
         self._ensure_config_for_existing_background()
@@ -106,37 +132,43 @@ class PalettePlugin(Star):
             f"{ROUTE_PREFIX}/upload-background",
             self.upload_background,
             ["POST"],
-            "上传 AstrBot 调色盘背景图片",
+            "上传 AstrBot 调色盘背景素材",
         )
         context.register_web_api(
             f"{ROUTE_PREFIX}/upload-background/<orientation>",
             self.upload_background_for_orientation,
             ["POST"],
-            "上传 AstrBot 调色盘指定方向背景图片",
+            "上传 AstrBot 调色盘指定方向背景素材",
+        )
+        context.register_web_api(
+            f"{ROUTE_PREFIX}/background-cover",
+            self.get_background_cover,
+            ["GET"],
+            "读取 AstrBot 调色盘动态素材封面",
         )
         context.register_web_api(
             f"{ROUTE_PREFIX}/backgrounds/select",
             self.select_background,
             ["POST"],
-            "切换 AstrBot 调色盘当前背景图片",
+            "切换 AstrBot 调色盘当前背景素材",
         )
         context.register_web_api(
             f"{ROUTE_PREFIX}/backgrounds/delete",
             self.delete_background,
             ["POST"],
-            "删除 AstrBot 调色盘背景图片",
+            "删除 AstrBot 调色盘背景素材",
         )
         context.register_web_api(
             f"{ROUTE_PREFIX}/backgrounds/random-select",
             self.random_select_background,
             ["POST"],
-            "随机切换 AstrBot 调色盘背景图片",
+            "随机切换 AstrBot 调色盘背景素材",
         )
         context.register_web_api(
             f"{ROUTE_PREFIX}/backgrounds/<filename>",
             self.get_background,
             ["GET"],
-            "读取 AstrBot 调色盘背景图片",
+            "读取 AstrBot 调色盘背景素材",
         )
 
     async def get_status(self):
@@ -157,6 +189,7 @@ class PalettePlugin(Star):
     async def get_config(self):
         return json_response(self._public_config())
 
+    @_serialized_config_update
     async def save_config(self):
         payload = await request.json(default={})
         if not isinstance(payload, dict):
@@ -188,7 +221,7 @@ class PalettePlugin(Star):
         files = await request.files()
         upload_file = files.get("file")
         if upload_file is None:
-            return error_response("请选择要上传的背景图片。")
+            return error_response("请选择要上传的背景素材。")
         normalized_orientation = self._normalize_background_orientation(
             orientation or request.query.get("orientation") or form.get("orientation"),
             default="landscape",
@@ -196,27 +229,42 @@ class PalettePlugin(Star):
         if normalized_orientation == "legacy":
             normalized_orientation = "landscape"
 
+        saved_filename = ""
         try:
+            # 原素材/封面处理在锁外；成功后再基于最新配置合并图库。
             saved_filename = await self._save_background_upload(upload_file)
-            config = self._normalize_config(self._public_config())
-            current_key, images_key = self._background_pool_keys(normalized_orientation)
-            background_images = self._append_background_image(
-                config[images_key],
-                saved_filename,
-            )
-            config = {
-                **config,
-                current_key: config.get(current_key) or saved_filename,
-                images_key: background_images,
-            }
-            self.injection_status = ensure_dashboard_injection(self.paths)
-            self._save_config(config)
-        except ValueError as exc:
+            async with self._config_lock:
+                config = self._normalize_config(self._public_config())
+                current_key, images_key = self._background_pool_keys(normalized_orientation)
+                background_images = self._append_background_image(
+                    config[images_key],
+                    saved_filename,
+                )
+                config = {
+                    **config,
+                    current_key: config.get(current_key) or saved_filename,
+                    images_key: background_images,
+                }
+                self.injection_status = ensure_dashboard_injection(self.paths)
+                if config.get(current_key) == saved_filename:
+                    config = await asyncio.to_thread(
+                        self._with_theme_colors, config, force=True,
+                        orientation=normalized_orientation,
+                    )
+                self._save_config(config)
+        except (Exception, asyncio.CancelledError) as exc:
+            if saved_filename:
+                with suppress(OSError):
+                    self._resolve_background(saved_filename).unlink()
+                delete_background_cover(self.paths.cover_dir, saved_filename)
+                delete_background_thumbnails(self.paths.thumbnail_dir, saved_filename)
+            if isinstance(exc, asyncio.CancelledError):
+                raise
             return error_response(str(exc))
 
         return json_response(
             {
-                "message": "背景图片已加入图库。",
+                "message": "背景素材已加入图库。",
                 "background_image": saved_filename,
                 "background_url": self._background_url(saved_filename),
                 "orientation": normalized_orientation,
@@ -224,14 +272,15 @@ class PalettePlugin(Star):
             }
         )
 
+    @_serialized_config_update
     async def select_background(self):
         payload = await request.json(default={})
         if not isinstance(payload, dict):
-            return error_response("背景图片参数不正确。")
+            return error_response("背景素材参数不正确。")
 
         filename = str(payload.get("background_image") or "").strip()
         if not filename:
-            return error_response("请选择要切换的背景图片。")
+            return error_response("请选择要切换的背景素材。")
         orientation = self._normalize_background_orientation(
             payload.get("orientation"),
             default="legacy",
@@ -256,19 +305,20 @@ class PalettePlugin(Star):
 
         return json_response(
             {
-                "message": "背景图片已切换。",
+                "message": "背景素材已切换。",
                 "config": self._public_config(),
             }
         )
 
+    @_serialized_config_update
     async def delete_background(self):
         payload = await request.json(default={})
         if not isinstance(payload, dict):
-            return error_response("背景图片参数不正确。")
+            return error_response("背景素材参数不正确。")
 
         filename = str(payload.get("background_image") or "").strip()
         if not filename:
-            return error_response("请选择要删除的背景图片。")
+            return error_response("请选择要删除的背景素材。")
         orientation = self._normalize_background_orientation(
             payload.get("orientation"),
             default="legacy",
@@ -281,12 +331,13 @@ class PalettePlugin(Star):
                 for pool in BACKGROUND_POOLS
             )
             if not is_known:
-                raise ValueError("背景图片不在图库中。")
+                raise ValueError("背景素材不在图库中。")
 
             target_path = self._resolve_background(filename)
             with suppress(FileNotFoundError):
                 target_path.unlink()
             delete_background_thumbnails(self.paths.thumbnail_dir, filename)
+            delete_background_cover(self.paths.cover_dir, filename)
 
             next_config = {**config}
             should_refresh_colors = False
@@ -302,12 +353,18 @@ class PalettePlugin(Star):
                     )
                     should_refresh_colors = True
 
+            color_warning = ""
             if should_refresh_colors:
-                next_config = self._with_theme_colors(
-                    next_config,
-                    force=True,
-                    orientation=orientation,
-                )
+                try:
+                    next_config = await asyncio.to_thread(
+                        self._with_theme_colors,
+                        next_config,
+                        force=True,
+                        orientation=orientation,
+                    )
+                except ValueError as exc:
+                    # 素材已删除，下一项封面损坏不能阻止清理配置引用。
+                    color_warning = f" 新背景主题色未更新：{exc}"
             config = next_config
             self._save_config(config)
         except ValueError as exc:
@@ -315,12 +372,13 @@ class PalettePlugin(Star):
 
         return json_response(
             {
-                "message": "背景图片已删除。",
+                "message": f"背景素材已删除。{color_warning}",
                 "orientation": orientation,
                 "config": self._public_config(),
             }
         )
 
+    @_serialized_config_update
     async def random_select_background(self):
         payload = await request.json(default={})
         if not isinstance(payload, dict):
@@ -383,12 +441,13 @@ class PalettePlugin(Star):
 
         return json_response(
             {
-                "message": "背景图片已随机切换。",
+                "message": "背景素材已随机切换。",
                 "orientation": pool,
                 "config": self._public_config(),
             }
         )
 
+    @_serialized_config_update
     async def recalculate_theme_colors(self):
         payload = await request.json(default={})
         if not isinstance(payload, dict):
@@ -431,12 +490,32 @@ class PalettePlugin(Star):
         except ValueError as exc:
             return error_response(str(exc), status_code=404)
 
-        content_type = ALLOWED_BACKGROUND_EXTENSIONS[path.suffix.lower()]
-        data = base64.b64encode(path.read_bytes()).decode("ascii")
+        media_type = probe_media_type(path)
+        # 视频/SVG 不把原文件编成 base64（视频可能上百 MB），改用封面。
+        preview_path = path
+        if media_type in {MEDIA_TYPE_VIDEO, MEDIA_TYPE_SVG, MEDIA_TYPE_ANIMATED}:
+            if media_type == MEDIA_TYPE_ANIMATED:
+                await self._ensure_legacy_cover(path)
+            cover_path = find_cover(self.paths.cover_dir, filename)
+            if cover_path is None:
+                return json_response(
+                    {
+                        "background_image": filename,
+                        "data_url": "",
+                        "media_type": media_type,
+                    }
+                )
+            preview_path = cover_path
+        if preview_path is path:
+            content_type = ALLOWED_BACKGROUND_EXTENSIONS[path.suffix.lower()]
+        else:
+            content_type = cover_content_type(preview_path)
+        data = base64.b64encode(preview_path.read_bytes()).decode("ascii")
         return json_response(
             {
                 "background_image": filename,
                 "data_url": f"data:{content_type};base64,{data}",
+                "media_type": media_type,
             }
         )
 
@@ -454,8 +533,29 @@ class PalettePlugin(Star):
 
         try:
             path = self._resolve_background(filename, must_exist=True)
-            thumbnail = ensure_background_thumbnail(
-                path,
+        except ValueError as exc:
+            return error_response(str(exc), status_code=404)
+
+        media_type = probe_media_type(path)
+        thumbnail_source = path
+        if media_type in {MEDIA_TYPE_VIDEO, MEDIA_TYPE_SVG}:
+            # 视频/SVG 无法直接抽帧，缩略图来自封面；无封面时返回空预览，
+            # 由设置页显示类型占位而不是报错。
+            cover_path = find_cover(self.paths.cover_dir, filename)
+            if cover_path is None:
+                return json_response(
+                    {
+                        "background_image": filename,
+                        "content_type": "",
+                        "data_url": "",
+                        "media_type": media_type,
+                    }
+                )
+            thumbnail_source = cover_path
+        try:
+            thumbnail = await asyncio.to_thread(
+                ensure_background_thumbnail,
+                thumbnail_source,
                 self.paths.thumbnail_dir,
                 filename,
             )
@@ -468,6 +568,7 @@ class PalettePlugin(Star):
                 "background_image": filename,
                 "content_type": thumbnail.content_type,
                 "data_url": f"data:{thumbnail.content_type};base64,{data}",
+                "media_type": media_type,
             }
         )
 
@@ -494,16 +595,23 @@ class PalettePlugin(Star):
             return error_response(str(exc), status_code=404)
 
         if not path.is_file():
-            return error_response("背景图片不存在。", status_code=404)
+            return error_response("背景素材不存在。", status_code=404)
 
         content_type = ALLOWED_BACKGROUND_EXTENSIONS[path.suffix.lower()]
+        headers = {
+            "Cache-Control": "private, max-age=300",
+            "X-Content-Type-Options": "nosniff",
+        }
+        if path.suffix.lower() == ".svg":
+            # SVG 上传时已清洗；直读地址再加 CSP 双保险，禁止脚本执行。
+            headers["Content-Security-Policy"] = (
+                "sandbox; default-src 'none'; style-src 'unsafe-inline'; "
+                "img-src data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+            )
         return file_response(
             path,
             content_type=content_type,
-            headers={
-                "Cache-Control": "private, max-age=300",
-                "X-Content-Type-Options": "nosniff",
-            },
+            headers=headers,
         )
 
     async def get_theme_css(self):
@@ -560,6 +668,10 @@ class PalettePlugin(Star):
 
         return {
             "enabled": self._config_bool("enabled", True),
+            "dynamic_background_enabled": self._config_bool(
+                "dynamic_background_enabled",
+                True,
+            ),
             "background_image": background_image,
             "background_images": background_images,
             "background_items": [
@@ -644,6 +756,16 @@ class PalettePlugin(Star):
                 self._select_direction_background(direction_config, "portrait")
             ),
             "fallback_background_url": self._background_url(fallback_background_image),
+            "background_media": self._background_media_info(background_image),
+            "landscape_background_media": self._background_media_info(
+                self._select_direction_background(direction_config, "landscape")
+            ),
+            "portrait_background_media": self._background_media_info(
+                self._select_direction_background(direction_config, "portrait")
+            ),
+            "fallback_background_media": self._background_media_info(
+                fallback_background_image
+            ),
         }
 
     def _config_bool(self, key: str, default: bool) -> bool:
@@ -757,6 +879,13 @@ class PalettePlugin(Star):
             "enabled": self._normalize_bool(
                 payload.get("enabled", current["enabled"]),
                 current["enabled"],
+            ),
+            "dynamic_background_enabled": self._normalize_bool(
+                payload.get(
+                    "dynamic_background_enabled",
+                    current["dynamic_background_enabled"],
+                ),
+                current["dynamic_background_enabled"],
             ),
             "background_image": background_image,
             "background_images": background_images,
@@ -898,12 +1027,30 @@ class PalettePlugin(Star):
         ):
             return config
 
-        background_path = self._resolve_background(filename, must_exist=True)
-        colors = extract_theme_colors(background_path)
+        color_source = self._theme_color_source(filename)
+        if color_source is None:
+            if force:
+                raise ValueError(
+                    "该素材暂无封面，无法提取主题色；"
+                    "请在设置页重新上传以生成封面。"
+                )
+            return config
+        if Path(filename).suffix.lower() in {".mp4", ".webm", ".svg"}:
+            colors = extract_theme_colors(color_source, strict=True)
+        else:
+            colors = extract_theme_colors(color_source)
         return {
             **config,
             **colors.to_dict(),
         }
+
+    def _theme_color_source(self, filename: str) -> Path | None:
+        """优先用持久化代表画面，旧图片无封面时继续使用原文件。"""
+
+        path = self._resolve_background(filename, must_exist=True)
+        if probe_media_type(path) in {MEDIA_TYPE_VIDEO, MEDIA_TYPE_SVG}:
+            return find_cover(self.paths.cover_dir, filename)
+        return find_cover(self.paths.cover_dir, filename) or path
 
     def _save_config(self, config: dict[str, Any]) -> None:
         if hasattr(self.config, "save_config"):
@@ -916,68 +1063,44 @@ class PalettePlugin(Star):
         self.config = config
 
     async def _save_background_upload(self, upload_file) -> str:
-        if (
-            upload_file.content_length is not None
-            and upload_file.content_length > MAX_BACKGROUND_BYTES
-        ):
-            raise ValueError("背景图片不能超过 10MB。")
+        return await save_background_upload(upload_file, self.paths)
 
-        self.paths.ensure_runtime_dirs()
-        background_id = uuid4().hex
-        first_bytes = b""
-        total_size = 0
-        temp_path = self.paths.background_dir / f"background-{background_id}.upload.tmp"
-        target_path: Path | None = None
+    async def get_background_cover(self):
+        """读取素材封面（运行时静态兜底与设置页预览共用）。"""
 
+        filename = str(request.query.get("filename") or "").strip()
+        if not filename:
+            return error_response("请选择要读取的封面。", status_code=404)
         try:
-            await upload_file.seek(0)
-        except Exception:
-            pass
+            # 封面只服务仍存在的素材；旧动图在首次读取时补生成。
+            path = self._resolve_background(filename, must_exist=True)
+            await self._ensure_legacy_cover(path)
+        except ValueError as exc:
+            return error_response(str(exc), status_code=404)
+        cover_path = find_cover(self.paths.cover_dir, filename)
+        if cover_path is None:
+            return error_response("该素材还没有封面。", status_code=404)
+        return file_response(
+            cover_path,
+            content_type=cover_content_type(cover_path),
+            headers={
+                "Cache-Control": "private, max-age=300",
+                "X-Content-Type-Options": "nosniff",
+            },
+        )
 
-        try:
-            with temp_path.open("wb") as output:
-                while True:
-                    chunk = await upload_file.read(1024 * 1024)
-                    if not chunk:
-                        break
-                    total_size += len(chunk)
-                    if total_size > MAX_BACKGROUND_BYTES:
-                        raise ValueError("背景图片不能超过 10MB。")
-                    if len(first_bytes) < 16:
-                        first_bytes += chunk[: 16 - len(first_bytes)]
-                    output.write(chunk)
-
-            if total_size == 0:
-                raise ValueError("背景图片内容为空。")
-            detected_suffix = self._detect_image_suffix(first_bytes)
-            if detected_suffix is None:
-                raise ValueError("仅支持 jpg、png、webp、gif 图片。")
-
-            # 以真实文件头为准，兼容“jpg 文件名里装着 png 内容”的图片。
-            filename = f"background-{background_id}{detected_suffix}"
-            target_path = self.paths.resolve_background_file(filename)
-            temp_path.replace(target_path)
-            with suppress(Exception):
-                ensure_background_thumbnail(
-                    target_path,
-                    self.paths.thumbnail_dir,
-                    filename,
-                )
-        except Exception:
-            with suppress(FileNotFoundError):
-                temp_path.unlink()
-            if target_path is not None:
-                with suppress(FileNotFoundError):
-                    target_path.unlink()
-            raise
-        return filename
+    async def _ensure_legacy_cover(self, path: Path) -> None:
+        # 旧动图无需重新上传；首次请求封面时生成并持久化代表帧。
+        if find_cover(self.paths.cover_dir, path.name) is None and probe_media_type(path) == MEDIA_TYPE_ANIMATED:
+            cover = await asyncio.to_thread(build_cover_from_animated_image, path)
+            await asyncio.to_thread(save_cover_image, cover, self.paths.cover_dir, path.name)
 
     def _resolve_background(self, filename: str, *, must_exist: bool = False) -> Path:
         path = self.paths.resolve_background_file(filename)
         if path.suffix.lower() not in ALLOWED_BACKGROUND_EXTENSIONS:
-            raise ValueError("背景图片文件类型不受支持。")
+            raise ValueError("背景素材文件类型不受支持。")
         if must_exist and not path.is_file():
-            raise ValueError("背景图片不存在，请重新上传。")
+            raise ValueError("背景素材不存在，请重新上传。")
         return path
 
     def _background_url(self, filename: str) -> str:
@@ -1008,13 +1131,49 @@ class PalettePlugin(Star):
         )
 
     def _background_item(self, filename: str, selected: bool) -> dict[str, Any]:
+        media = self._background_media_info(filename)
+        size_bytes = 0
+        with suppress(OSError):
+            size_bytes = self._resolve_background(filename).stat().st_size
         return {
             "filename": filename,
             "url": self._background_url(filename),
             "thumbnail_url": self._background_thumbnail_url(filename),
             "preview_url": self._background_preview_url(filename),
+            "media_type": media["media_type"],
+            "animated": media["animated"],
+            "cover_url": media["cover_url"],
+            "size_bytes": size_bytes,
             "selected": selected,
         }
+
+    def _background_media_info(self, filename: str) -> dict[str, Any]:
+        """公开配置中素材的播放相关信息；无素材时全部为空。"""
+
+        filename = filename.strip()
+        if not filename:
+            return {"media_type": "", "animated": False, "cover_url": ""}
+        animated = False
+        with suppress(ValueError):
+            path = self._resolve_background(filename, must_exist=True)
+            animated = is_animated_image(path)
+        return {
+            "media_type": media_type_for_filename(filename, animated=animated),
+            "animated": animated,
+            "cover_url": self._background_cover_url(filename),
+        }
+
+    def _background_cover_url(self, filename: str) -> str:
+        filename = filename.strip()
+        if not filename:
+            return ""
+        if find_cover(self.paths.cover_dir, filename) is None:
+            if probe_media_type(self._resolve_background(filename)) != MEDIA_TYPE_ANIMATED:
+                return ""
+        return (
+            f"/api/v1/plugins/extensions/{PLUGIN_NAME}/background-cover"
+            f"?filename={quote(filename)}"
+        )
 
     def _public_background_images(
         self,
@@ -1139,7 +1298,7 @@ class PalettePlugin(Star):
             images = list(config.get(images_key) or [])
             if images:
                 return pool, str(config.get(current_key) or "").strip(), images
-        raise ValueError("图库中还没有可随机的背景图片。")
+        raise ValueError("图库中还没有可随机的背景素材。")
 
     async def _build_token_stats(self, days: int) -> dict[str, Any]:
         from astrbot.core.db.po import ProviderStat
@@ -1315,15 +1474,3 @@ class PalettePlugin(Star):
         if not isinstance(value, str):
             return ""
         return value[:20000]
-
-    @staticmethod
-    def _detect_image_suffix(content: bytes) -> str | None:
-        if content.startswith(b"\xff\xd8\xff"):
-            return ".jpg"
-        if content.startswith(b"\x89PNG\r\n\x1a\n"):
-            return ".png"
-        if content.startswith(b"RIFF") and content[8:12] == b"WEBP":
-            return ".webp"
-        if content.startswith((b"GIF87a", b"GIF89a")):
-            return ".gif"
-        return None

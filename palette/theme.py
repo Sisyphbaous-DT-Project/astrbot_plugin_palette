@@ -4,6 +4,7 @@ import re
 from typing import Any
 
 from .chat_theme import build_chat_theme_css
+from .constants import VERSION
 
 _ADVANCED_CSS_BLOCKED_AT_RULE = re.compile(r"@import\b", re.IGNORECASE)
 _EXTERNAL_URL = re.compile(r"url\(\s*(['\"]?)(https?:|//)", re.IGNORECASE)
@@ -71,7 +72,7 @@ def build_theme_css(config: dict[str, Any]) -> str:
 
     return "\n".join(
         [
-            "/* AstrBot调色盘 0.4.20 运行时主题 CSS */",
+            f"/* AstrBot调色盘 {VERSION} 运行时主题 CSS */",
             ":root {",
             f"  --astrbot-palette-enabled: {enabled};",
             "  --astrbot-palette-background-image: none;",
@@ -130,6 +131,15 @@ def build_theme_css(config: dict[str, Any]) -> str:
             "",
             "html.astrbot-palette-active #astrbot-palette-background .astrbot-palette-background-layer.is-active {",
             "  opacity: 1;",
+            "}",
+            "html.astrbot-palette-active #astrbot-palette-background .astrbot-palette-background-video {",
+            "  position: absolute;",
+            "  inset: 0;",
+            "  width: 100%;",
+            "  height: 100%;",
+            "  object-fit: var(--astrbot-palette-video-fit, cover);",
+            "  object-position: var(--astrbot-palette-background-position, center center);",
+            "  pointer-events: none;",
             "}",
             "",
             "html.astrbot-palette-active body::before {",

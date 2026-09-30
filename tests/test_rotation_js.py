@@ -233,7 +233,10 @@ class BootstrapRuntimeBalanceTest(unittest.TestCase):
         body = _function_body("async function refreshPalette(options)")
         self.assertIn("scheduleSyncNeeded = rotationScheduleNeedsSync(", body)
         finally_part = body.rsplit("} finally {", 1)[1]
-        self.assertIn("if (scheduleSyncNeeded) {", finally_part)
+        self.assertIn(
+            "if (scheduleSyncNeeded && isPaletteRefreshCurrent(refreshGeneration)) {",
+            finally_part,
+        )
         self.assertIn("syncRotationSchedule();", finally_part)
         self.assertIn("releaseLoadingAndReplay();", finally_part)
 
