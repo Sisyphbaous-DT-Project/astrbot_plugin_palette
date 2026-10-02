@@ -19,6 +19,7 @@ class PalettePaths:
         self.background_dir = self.plugin_data_dir / "backgrounds"
         self.thumbnail_dir = self.plugin_data_dir / "thumbnails"
         self.cover_dir = self.plugin_data_dir / "covers"
+        self.upload_dir = self.plugin_data_dir / "uploads"
         self.patch_backup_dir = self.plugin_data_dir / "dashboard_backups"
         self.user_dashboard_dist = self.data_root / "dist"
         self.user_dashboard_index = self.user_dashboard_dist / "index.html"
@@ -28,6 +29,7 @@ class PalettePaths:
         self.background_dir.mkdir(parents=True, exist_ok=True)
         self.thumbnail_dir.mkdir(parents=True, exist_ok=True)
         self.cover_dir.mkdir(parents=True, exist_ok=True)
+        self.upload_dir.mkdir(parents=True, exist_ok=True)
         self.patch_backup_dir.mkdir(parents=True, exist_ok=True)
 
     def resolve_background_file(self, filename: str) -> Path:

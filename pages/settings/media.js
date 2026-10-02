@@ -1,6 +1,10 @@
 // 素材上传和独立预览共用：真实类型探测、静态封面、单文件上传包。
 export const BUNDLE_MAGIC = "PALETTE-MEDIA-1\n";
 
+function throwIfAborted(signal) {
+  if (signal?.aborted) throw new DOMException("上传已取消", "AbortError");
+}
+
 export async function inspectFile(file) {
   const head = new Uint8Array(await file.slice(0, 4096).arrayBuffer());
   const starts = (bytes, offset = 0) => bytes.every((byte, i) => head[i + offset] === byte);
@@ -76,10 +80,12 @@ function waitEvent(element, name, timeout = 15000, signal) {
   });
 }
 
-export async function makeCover(file, info, doc = document) {
+export async function makeCover(file, info, doc = document, signal) {
+  throwIfAborted(signal);
   const source = info.kind === "svg"
     ? new Blob([safeSvgText(await file.text())], { type: info.mime })
     : new Blob([file], { type: info.mime });
+  throwIfAborted(signal);
   const url = URL.createObjectURL(source);
   const media = info.kind === "video" ? doc.createElement("video") : new Image();
   try {
@@ -88,14 +94,16 @@ export async function makeCover(file, info, doc = document) {
       media.playsInline = true;
       media.preload = "auto";
     }
-    const loaded = waitEvent(media, info.kind === "video" ? "loadeddata" : "load");
+    const loaded = waitEvent(media, info.kind === "video" ? "loadeddata" : "load", 15000, signal);
     media.src = url;
     if (info.kind === "video") media.load();
     await loaded;
+    throwIfAborted(signal);
     if (info.kind === "video" && Number.isFinite(media.duration) && media.duration > 0.2) {
-      const sought = waitEvent(media, "seeked");
+      const sought = waitEvent(media, "seeked", 15000, signal);
       media.currentTime = Math.min(1, media.duration / 10);
       await sought;
+      throwIfAborted(signal);
     }
     const width = media.videoWidth || media.naturalWidth;
     const height = media.videoHeight || media.naturalHeight;
@@ -106,6 +114,7 @@ export async function makeCover(file, info, doc = document) {
     canvas.height = Math.max(1, Math.round(height * scale));
     canvas.getContext("2d").drawImage(media, 0, 0, canvas.width, canvas.height);
     const cover = await new Promise((resolve) => canvas.toBlob(resolve, "image/png"));
+    throwIfAborted(signal);
     if (!cover || cover.size > 4 * 1024 * 1024) throw new Error("封面生成失败或超过 4MiB");
     return cover;
   } finally {
@@ -126,9 +135,15 @@ export function bundleFile(file, cover) {
   return new File([BUNDLE_MAGIC, length, cover, file], file.name, { type: "application/octet-stream" });
 }
 
-export async function prepareUpload(file) {
+export async function prepareUpload(file, signal) {
+  throwIfAborted(signal);
   const info = await inspectFile(file);
-  if (["video", "svg"].includes(info.kind)) return bundleFile(file, await makeCover(file, info));
+  throwIfAborted(signal);
+  if (["video", "svg"].includes(info.kind)) {
+    const cover = await makeCover(file, info, document, signal);
+    throwIfAborted(signal);
+    return bundleFile(file, cover);
+  }
   return file;
 }
 

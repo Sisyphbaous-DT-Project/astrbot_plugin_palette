@@ -8,7 +8,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import re
 import warnings
 from collections import OrderedDict
@@ -28,6 +27,7 @@ from .constants import (
     SVG_BACKGROUND_EXTENSIONS,
     VIDEO_BACKGROUND_EXTENSIONS,
 )
+from .file_tasks import run_file_task
 
 MEDIA_TYPE_IMAGE = "image"
 MEDIA_TYPE_ANIMATED = "animated_image"
@@ -388,8 +388,14 @@ def _ebml_element(stream, limit: int) -> tuple[int, int, int]:
     return kind, start, end
 
 
-async def save_background_upload(upload, paths) -> str:
-    """单次接收原素材与封面，校验完整后才返回可入库的文件名。"""
+async def save_background_upload(
+    upload, paths, *, background_id: str | None = None
+) -> str:
+    """单次接收原素材与封面，校验完整后才返回可入库的文件名。
+
+    background_id 由服务器在分块上传会话创建时预先生成，供完成回执
+    引用稳定的候选素材；普通上传不传，客户端不能指定。
+    """
 
     async def read_exact(size):
         parts = bytearray()
@@ -401,7 +407,11 @@ async def save_background_upload(upload, paths) -> str:
         return bytes(parts)
 
     paths.ensure_runtime_dirs()
-    background_id = uuid4().hex
+    if background_id is not None and not re.fullmatch(
+        r"[0-9a-f]{16,64}", background_id
+    ):
+        raise ValueError("素材标识不正确。")
+    background_id = background_id or uuid4().hex
     temp = paths.background_dir / f"background-{background_id}.upload.tmp"
     target = None
     filename = ""
@@ -433,11 +443,11 @@ async def save_background_upload(upload, paths) -> str:
                 if len(first_bytes) < 4096:
                     first_bytes += chunk[: 4096 - len(first_bytes)]
                 suffix = suffix or detect_background_suffix(first_bytes)
-                await asyncio.to_thread(output.write, chunk)
+                await run_file_task(output.write, chunk)
         suffix = suffix or detect_background_suffix(first_bytes)
         if not suffix or not total_size:
             raise ValueError("素材内容为空或格式不支持；支持图片、MP4、WebM 和 SVG。")
-        await asyncio.to_thread(validate_media_file, temp, suffix)
+        await run_file_task(validate_media_file, temp, suffix)
         filename = f"background-{background_id}{suffix}"
         target = paths.resolve_background_file(filename)
         temp.replace(target)
@@ -445,11 +455,11 @@ async def save_background_upload(upload, paths) -> str:
         if media_type in {MEDIA_TYPE_VIDEO, MEDIA_TYPE_SVG}:
             if cover_data is None:
                 raise ValueError("视频/SVG 需要静态封面，请通过调色盘设置页上传。")
-            cover = await asyncio.to_thread(load_cover_upload, cover_data)
+            cover = await run_file_task(load_cover_upload, cover_data)
         else:
             # 原图解码后的代表帧同时用于动图静态兜底，封面不信任上传方。
-            cover = await asyncio.to_thread(build_cover_from_animated_image, target)
-        await asyncio.to_thread(save_cover_image, cover, paths.cover_dir, filename)
+            cover = await run_file_task(build_cover_from_animated_image, target)
+        await run_file_task(save_cover_image, cover, paths.cover_dir, filename)
         return filename
     except BaseException:
         with suppress(OSError):

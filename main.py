@@ -52,6 +52,19 @@ from .palette.thumbnails import (
     delete_background_thumbnails,
     ensure_background_thumbnail,
 )
+from .palette.file_tasks import run_file_task
+from .palette.uploads import (
+    UploadError,
+    UploadHooks,
+    UploadManager,
+)
+
+try:
+    from astrbot.api import logger as _logger
+except Exception:  # 测试环境 stub 不含 logger 时回退标准日志。
+    import logging
+
+    _logger = logging.getLogger(PLUGIN_NAME)
 
 BACKGROUND_ORIENTATIONS = {"landscape", "portrait"}
 BACKGROUND_POOLS = {"legacy", *BACKGROUND_ORIENTATIONS}
@@ -79,6 +92,18 @@ class PalettePlugin(Star):
         self.paths = PalettePaths()
         self.injection_status = ensure_dashboard_injection(self.paths)
         self._ensure_config_for_existing_background()
+        self._uploads = UploadManager(
+            self.paths,
+            UploadHooks(
+                save_material=self._save_material_with_id,
+                commit_material=self._commit_prepared_background,
+                build_result=self._build_upload_result,
+                cleanup_candidate=self._cleanup_candidate_material,
+                find_committed_material=self._find_committed_material,
+            ),
+        )
+        for note in self._uploads.recover():
+            _logger.warning(f"[{PLUGIN_NAME}] {note}")
 
         context.register_web_api(
             f"{ROUTE_PREFIX}/status",
@@ -141,6 +166,36 @@ class PalettePlugin(Star):
             "上传 AstrBot 调色盘指定方向背景素材",
         )
         context.register_web_api(
+            f"{ROUTE_PREFIX}/uploads/init",
+            self.init_chunked_upload,
+            ["POST"],
+            "创建 AstrBot 调色盘分块上传会话",
+        )
+        context.register_web_api(
+            f"{ROUTE_PREFIX}/uploads/<upload_id>/chunk/<index>",
+            self.upload_chunk,
+            ["POST"],
+            "上传 AstrBot 调色盘素材分块",
+        )
+        context.register_web_api(
+            f"{ROUTE_PREFIX}/uploads/<upload_id>/status",
+            self.get_chunked_upload_status,
+            ["GET"],
+            "查询 AstrBot 调色盘分块上传状态",
+        )
+        context.register_web_api(
+            f"{ROUTE_PREFIX}/uploads/<upload_id>/complete",
+            self.complete_chunked_upload,
+            ["POST"],
+            "完成 AstrBot 调色盘分块上传并入图库",
+        )
+        context.register_web_api(
+            f"{ROUTE_PREFIX}/uploads/<upload_id>/cancel",
+            self.cancel_chunked_upload,
+            ["POST"],
+            "取消 AstrBot 调色盘分块上传",
+        )
+        context.register_web_api(
             f"{ROUTE_PREFIX}/background-cover",
             self.get_background_cover,
             ["GET"],
@@ -183,6 +238,8 @@ class PalettePlugin(Star):
                 },
                 "paths": self.paths.to_public_dict(),
                 "injection": injection_status.to_dict(),
+                # 前端据此决定是否走分块上传；旧后端无此字段时仅小包回退旧接口。
+                "upload_protocol": self._uploads.capability(),
             }
         )
 
@@ -230,30 +287,16 @@ class PalettePlugin(Star):
             normalized_orientation = "landscape"
 
         saved_filename = ""
+        committed = False
         try:
             # 原素材/封面处理在锁外；成功后再基于最新配置合并图库。
             saved_filename = await self._save_background_upload(upload_file)
-            async with self._config_lock:
-                config = self._normalize_config(self._public_config())
-                current_key, images_key = self._background_pool_keys(normalized_orientation)
-                background_images = self._append_background_image(
-                    config[images_key],
-                    saved_filename,
-                )
-                config = {
-                    **config,
-                    current_key: config.get(current_key) or saved_filename,
-                    images_key: background_images,
-                }
-                self.injection_status = ensure_dashboard_injection(self.paths)
-                if config.get(current_key) == saved_filename:
-                    config = await asyncio.to_thread(
-                        self._with_theme_colors, config, force=True,
-                        orientation=normalized_orientation,
-                    )
-                self._save_config(config)
+            await self._commit_prepared_background(
+                saved_filename, normalized_orientation
+            )
+            committed = True
         except (Exception, asyncio.CancelledError) as exc:
-            if saved_filename:
+            if saved_filename and not committed:
                 with suppress(OSError):
                     self._resolve_background(saved_filename).unlink()
                 delete_background_cover(self.paths.cover_dir, saved_filename)
@@ -263,14 +306,153 @@ class PalettePlugin(Star):
             return error_response(str(exc))
 
         return json_response(
-            {
-                "message": "背景素材已加入图库。",
-                "background_image": saved_filename,
-                "background_url": self._background_url(saved_filename),
-                "orientation": normalized_orientation,
-                "config": self._public_config(),
-            }
+            self._build_upload_result(saved_filename, normalized_orientation)
         )
+
+    async def _commit_prepared_background(
+        self, saved_filename: str, normalized_orientation: str
+    ) -> None:
+        """已备素材并入最新图库并保存；新旧上传入口共用，抛错时配置未保存。"""
+
+        async with self._config_lock:
+            config = self._normalize_config(self._public_config())
+            current_key, images_key = self._background_pool_keys(normalized_orientation)
+            background_images = self._append_background_image(
+                config[images_key],
+                saved_filename,
+            )
+            config = {
+                **config,
+                current_key: config.get(current_key) or saved_filename,
+                images_key: background_images,
+            }
+            self.injection_status = ensure_dashboard_injection(self.paths)
+            if config.get(current_key) == saved_filename:
+                config = await run_file_task(
+                    self._with_theme_colors, config, force=True,
+                    orientation=normalized_orientation,
+                )
+            self._save_config(config)
+
+    def _build_upload_result(
+        self, saved_filename: str, normalized_orientation: str
+    ) -> dict[str, Any]:
+        """成功回执读取当前最新配置，不回填过期快照。"""
+
+        return {
+            "message": "背景素材已加入图库。",
+            "background_image": saved_filename,
+            "background_url": self._background_url(saved_filename),
+            "orientation": normalized_orientation,
+            "config": self._public_config(),
+        }
+
+    async def _save_material_with_id(self, reader, background_id: str) -> str:
+        return await save_background_upload(
+            reader, self.paths, background_id=background_id
+        )
+
+    def _candidate_material_filenames(self, material_id: str) -> list[str]:
+        """服务器预生成素材 ID 对应的候选文件名（只属于上传会话）。"""
+
+        prefix = f"background-{material_id}."
+        with suppress(OSError):
+            return [
+                path.name
+                for path in self.paths.background_dir.iterdir()
+                if path.is_file() and path.name.startswith(prefix)
+            ]
+        return []
+
+    def _cleanup_candidate_material(self, material_id: str) -> None:
+        for filename in self._candidate_material_filenames(material_id):
+            with suppress(OSError):
+                (self.paths.background_dir / filename).unlink()
+            delete_background_cover(self.paths.cover_dir, filename)
+            delete_background_thumbnails(self.paths.thumbnail_dir, filename)
+
+    def _find_committed_material(self, material_id: str) -> str:
+        """素材 ID 已被任一正式图库引用且原素材存在时返回文件名，否则空串。"""
+
+        prefix = f"background-{material_id}."
+        config = self._public_config()
+        names = {
+            *config["background_images"],
+            *config["landscape_background_images"],
+            *config["portrait_background_images"],
+            config["background_image"],
+            config["landscape_background_image"],
+            config["portrait_background_image"],
+        }
+        for name in names:
+            if (
+                name
+                and name.startswith(prefix)
+                and self._resolve_background(name).is_file()
+            ):
+                return name
+        return ""
+
+    async def init_chunked_upload(self):
+        payload = await request.json(default={})
+        try:
+            result = await self._uploads.init_session(
+                self._request_username(), payload
+            )
+        except UploadError as exc:
+            return error_response(str(exc))
+        return json_response(result)
+
+    async def upload_chunk(self, upload_id: str, index: str):
+        files = await request.files()
+        upload_file = files.get("file")
+        if upload_file is None:
+            return error_response("请选择要上传的分块。")
+        try:
+            result = await self._uploads.append_chunk(
+                self._request_username(), upload_id, index, upload_file
+            )
+        except UploadError as exc:
+            return error_response(str(exc))
+        return json_response(result)
+
+    async def get_chunked_upload_status(self, upload_id: str):
+        try:
+            result = await self._uploads.get_status(
+                self._request_username(), upload_id
+            )
+        except UploadError as exc:
+            return error_response(str(exc), status_code=404)
+        return json_response(result)
+
+    async def complete_chunked_upload(self, upload_id: str):
+        try:
+            result = await self._uploads.complete(
+                self._request_username(), upload_id
+            )
+        except UploadError as exc:
+            return error_response(str(exc))
+        return json_response(result)
+
+    async def cancel_chunked_upload(self, upload_id: str):
+        try:
+            result = await self._uploads.cancel(
+                self._request_username(), upload_id
+            )
+        except UploadError as exc:
+            return error_response(str(exc))
+        return json_response(result)
+
+    @staticmethod
+    def _request_username() -> str:
+        """会话绑定已鉴权用户身份；测试桩没有 username 时按匿名处理。"""
+
+        return str(getattr(request, "username", "") or "")
+
+    async def terminate(self) -> None:
+        """插件重载/终止时取消在途入库任务并等待真正结束。"""
+
+        await self._uploads.shutdown()
 
     @_serialized_config_update
     async def select_background(self):

@@ -34,7 +34,7 @@ function settingsBridge() {
     window.AstrBotPluginPage = {
       ready:async()=>({isDark:true}),onContext(){},
       apiGet:async(endpoint,params)=>{
-        if(endpoint==="status")return {plugin:{version:"0.5.2"},injection:{}};
+        if(endpoint==="status")return {plugin:{version:"0.5.3"},injection:{}};
         if(endpoint==="background-thumbnail")return {data_url:""};
         return await (await fetch("${prefix}config",{headers:{Authorization:"Bearer local-cache-test"}})).json();
       }

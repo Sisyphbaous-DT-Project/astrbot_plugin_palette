@@ -781,7 +781,11 @@ class DashboardFrameSurfaceTest(unittest.TestCase):
         )
         bodies = _rules_bodies(css, main)
         self.assertEqual(len(bodies), 1)
-        self.assertIn("height: 100dvh !important;", bodies[0])
+        # 4.29 顶栏改为文档流并定义工具栏变量；旧版变量不存在时回退 0px。
+        self.assertIn(
+            "height: calc(100dvh - var(--astrbot-toolbar-height, 0px)) !important;",
+            bodies[0],
+        )
         self.assertIn("overflow: hidden !important;", bodies[0])
         wrapper = _rules_bodies(css, f"{main} > .page-wrapper")
         self.assertEqual(len(wrapper), 1)
@@ -1496,6 +1500,247 @@ class AstrBot4281SurfaceTest(unittest.TestCase):
                 css,
                 f"不得接管点击层或链接行为: {forbidden}",
             )
+
+
+class AstrBot429LayoutTest(unittest.TestCase):
+    """4.29 布局适配：配置页扣除顶栏、外框装饰清除、正文渐变压盖。"""
+
+    def test_frame_decor_only_cleared_on_main_wrapper(self) -> None:
+        css = _css({"surface_opacity": 0.4})
+        found = False
+        for match in re.finditer(r"([^{}]+)\{([^{}]*)\}", css):
+            selectors, body = match.group(1), match.group(2)
+            if "border-top-left-radius" not in body:
+                continue
+            found = True
+            # 只允许命中主布局直属 wrapper，不能扩大到内部卡片。
+            for selector in selectors.split(","):
+                self.assertIn("#app .v-main > .page-wrapper", selector.strip())
+            self.assertIn("border-left: none !important;", body)
+            self.assertIn("border-top: none !important;", body)
+            self.assertIn("border-top-left-radius: 0 !important;", body)
+        self.assertTrue(found, "未找到外框装饰清除规则")
+
+    def test_main_area_gradient_removed_with_scoped_rule(self) -> None:
+        css = _css()
+        bodies = _rules_bodies(
+            css, "html.astrbot-palette-active #app .v-application .v-main"
+        )
+        self.assertTrue(bodies, "未找到包含 #app 的 v-main 定向规则")
+        self.assertTrue(
+            any(
+                "background-color: transparent !important;" in body
+                and "background-image: none !important;" in body
+                for body in bodies
+            ),
+            "定向规则必须显式输出透明背景并去掉渐变",
+        )
+
+
+class AstrBot429NavigationTest(unittest.TestCase):
+    """4.29 侧栏导航：通用规则排除新语义类，原生选中/hover 反馈保留。"""
+
+    def test_generic_rules_exclude_new_nav_classes(self) -> None:
+        css = _css()
+        # 通用 .v-list-item--active 染色规则必须排除 dashboard-nav-item；
+        # 毛玻璃滤镜规则允许继续作用于当前项，不在此断言。
+        generic = [
+            match
+            for match in re.finditer(r"([^{}]+)\{([^{}]*)\}", css)
+            if ".v-list-item--active" in match.group(1)
+            and "background-color" in match.group(2)
+            and ".dashboard-nav-item.v-list-item--active" not in match.group(1)
+            and ".v-list-group__header.v-list-item--active" not in match.group(1)
+        ]
+        self.assertTrue(generic, "未找到通用选中染色规则")
+        for match in generic:
+            self.assertIn(":not(.dashboard-nav-item)", match.group(1))
+        button_rules = [
+            match
+            for match in re.finditer(r"([^{}]+)\{([^{}]*)\}", css)
+            if ".v-navigation-drawer:not(.chat-sidebar) .v-btn" in match.group(1)
+        ]
+        self.assertTrue(button_rules, "未找到侧栏按钮通用规则")
+        for match in button_rules:
+            self.assertIn(":not(.dashboard-sidebar-brand-toggle)", match.group(1))
+            self.assertIn(":not(.sidebar-footer-btn)", match.group(1))
+
+    def test_nav_item_states_keep_native_feedback(self) -> None:
+        for config in (
+            {"surface_opacity": 0, "stats_card_blur": 0},
+            {"surface_opacity": 0.4, "stats_card_blur": 14},
+        ):
+            css = _css(config)
+            # 普通 hover 保留原生 on-surface 0.05。
+            hover = _rules_bodies(
+                css, ".leftSidebar .dashboard-nav-item:hover"
+            )
+            self.assertTrue(
+                any("rgba(var(--v-theme-on-surface), 0.05)" in body for body in hover),
+                "导航 hover 应保留原生 0.05 底色",
+            )
+            # 当前项与选中+hover 都保留原生主色 0.08 底块和主色文字。
+            active = [
+                match
+                for match in re.finditer(r"([^{}]+)\{([^{}]*)\}", css)
+                if ".dashboard-nav-item.v-list-item--active:not(.v-list-group__header)"
+                in match.group(1)
+            ]
+            self.assertTrue(active, "未找到导航选中规则")
+            selectors = " ".join(match.group(1) for match in active)
+            self.assertIn(":hover", selectors, "选中+hover 必须保持主色反馈")
+            for match in active:
+                self.assertIn(
+                    "rgba(var(--v-theme-primary), 0.08)", match.group(2)
+                )
+                self.assertIn("rgb(var(--v-theme-primary))", match.group(2))
+            # 展开分组标题保持透明。
+            group = [
+                match
+                for match in re.finditer(r"([^{}]+)\{([^{}]*)\}", css)
+                if ".dashboard-nav-item.v-list-group__header" in match.group(1)
+                and "transparent" in match.group(2)
+            ]
+            self.assertTrue(group, "分组标题不应加底块")
+
+    def test_brand_toggle_and_footer_buttons_transparent(self) -> None:
+        css = _css({"surface_opacity": 0.4})
+        base = _rules_bodies(
+            css, ".leftSidebar .dashboard-sidebar-brand-toggle"
+        )
+        self.assertTrue(
+            any(
+                "background: transparent !important;" in body
+                and "background-color: transparent !important;" in body
+                for body in base
+            ),
+            "折叠按钮默认应保持透明",
+        )
+        # 不接管原生 36px 尺寸。
+        for body in base:
+            self.assertNotIn("width:", body)
+            self.assertNotIn("height:", body)
+        footer_hover = [
+            match.group(2)
+            for match in re.finditer(r"([^{}]+)\{([^{}]*)\}", css)
+            if ".sidebar-footer-btn:hover" in match.group(1)
+        ]
+        self.assertTrue(footer_hover, "未找到侧栏底部按钮 hover 规则")
+        self.assertTrue(
+            any(
+                "rgba(var(--v-theme-on-surface), 0.08)" in body
+                for body in footer_hover
+            ),
+            "侧栏底部按钮 hover 应保留原生 0.08 底色",
+        )
+
+
+class AstrBot429IconEffectTest(unittest.TestCase):
+    """4.29 新 Lucide SVG 图标的文字增强：三模式与作用域约束。"""
+
+    SCOPES = (
+        ".leftSidebar .sidebar-lucide-icon",
+        ".leftSidebar .sidebar-footer-lucide-icon",
+        ".leftSidebar .dashboard-sidebar-panel-toggle-icon",
+        ".top-header:not(.chat-mode-header) .header-menu-btn svg",
+    )
+
+    def test_effect_modes_apply_to_semantic_svg_icons(self) -> None:
+        for mode in ("soft_shadow", "stroke"):
+            css = _css({"text_enhancement_mode": mode})
+            for scope in self.SCOPES:
+                bodies = [
+                    match.group(2)
+                    for match in re.finditer(r"([^{}]+)\{([^{}]*)\}", css)
+                    if any(
+                        f'data-astrbot-palette-text-mode="{mode}"' in part
+                        and scope in part
+                        for part in match.group(1).split(",")
+                    )
+                ]
+                self.assertTrue(bodies, f"{mode} 模式缺少 {scope} 的增强规则")
+                self.assertTrue(
+                    any("drop-shadow" in body for body in bodies),
+                    f"{mode} 模式的 {scope} 应复用图标阴影增强",
+                )
+
+    def test_off_mode_explicitly_disables_new_effect(self) -> None:
+        css = _css({"text_enhancement_mode": "off"})
+        for scope in self.SCOPES:
+            bodies = [
+                match.group(2)
+                for match in re.finditer(r"([^{}]+)\{([^{}]*)\}", css)
+                if any(
+                    'data-astrbot-palette-text-mode="off"' in part and scope in part
+                    for part in match.group(1).split(",")
+                )
+            ]
+            self.assertTrue(bodies, f"off 模式缺少 {scope} 的显式关闭规则")
+            self.assertTrue(
+                any("filter: none !important;" in body for body in bodies),
+                f"off 模式的 {scope} 应显式关闭滤镜",
+            )
+
+    def test_no_unscoped_global_svg_filter(self) -> None:
+        css = _css()
+        for match in re.finditer(r"([^{}]+)\{([^{}]*)\}", css):
+            selectors, body = match.group(1), match.group(2)
+            if "svg" not in selectors or "filter" not in body:
+                continue
+            for selector in selectors.split(","):
+                if "svg" not in selector:
+                    continue
+                self.assertTrue(
+                    ".leftSidebar" in selector or ".header-menu-btn" in selector,
+                    f"不允许无作用域的 SVG 滤镜: {selector.strip()}",
+                )
+
+
+class McpBatchSelectionTest(unittest.TestCase):
+    """4.29 MCP 批量选择：选中整行反馈恢复且不随主题开关消失。"""
+
+    SELECTED = ".outlined-action-list-item.mcp-server-list-item--selected"
+
+    def test_selected_state_restores_native_background_and_border(self) -> None:
+        for config in (
+            {"surface_opacity": 0, "stats_card_blur": 0},
+            {"surface_opacity": 0.4, "stats_card_blur": 14},
+        ):
+            css = _css(config)
+            bodies = _rules_bodies_containing(css, self.SELECTED)
+            self.assertTrue(bodies, "未找到 MCP 选中规则")
+            self.assertTrue(
+                any(
+                    "rgba(var(--v-theme-primary), 0.06)" in body
+                    and "rgba(var(--v-theme-primary), 0.5)" in body
+                    for body in bodies
+                ),
+                "MCP 选中应恢复原生 0.06 背景与 0.5 边框",
+            )
+            for body in bodies:
+                self.assertNotIn("backdrop-filter", body)
+                self.assertNotIn("box-shadow", body)
+
+    def test_selected_hover_keeps_feedback_and_follows_generic_rules(self) -> None:
+        css = _css()
+        hover_selected = [
+            match.group(2)
+            for match in re.finditer(r"([^{}]+)\{([^{}]*)\}", css)
+            if f"{self.SELECTED}:hover" in match.group(1)
+        ]
+        self.assertTrue(hover_selected, "选中+hover 必须保留选中反馈")
+        self.assertTrue(
+            any("rgba(var(--v-theme-primary), 0.06)" in body for body in hover_selected)
+        )
+        generic_hover = _rule_index(
+            css, ".v-main .outlined-action-list-item:hover"
+        )
+        selected = _rule_index(css, self.SELECTED)
+        self.assertGreaterEqual(generic_hover, 0)
+        self.assertGreaterEqual(selected, 0)
+        self.assertGreater(
+            selected, generic_hover, "选中规则必须在通用 hover 之后输出"
+        )
 
 
 class CssIntegrityTest(unittest.TestCase):

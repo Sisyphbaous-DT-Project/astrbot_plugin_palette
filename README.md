@@ -4,17 +4,18 @@
   <img src="docs/images/logo-artwork.png" alt="AstrBot调色盘主视觉图" width="640">
 </p>
 
-AstrBot调色盘是一个 AstrBot WebUI 美化插件。当前版本聚焦于背景图库、透明界面、Liquid Glass 设置页、文字可读性增强和壁纸主题色联动，让 Dashboard 可以在不修改 AstrBot 源码的前提下换上自定义壁纸。
+AstrBot调色盘是一个 AstrBot WebUI 美化插件，提供背景图库、本机缓存、透明界面、Liquid Glass 设置页、文字可读性增强和壁纸主题色联动。`0.5.3` 新增大素材分块上传并适配 AstrBot 4.29 的布局与导航，让 Dashboard 可以在不修改 AstrBot 源码的前提下换上自定义壁纸。
 
-当前已核对兼容 AstrBot `4.28.2`。
+当前已核对兼容 AstrBot `4.28.2`，并按 `4.29.0-beta.1` 源码完成适配。
 
-> 当前版本：`0.5.2`
+> 当前版本：`0.5.3`
 >
-> 兼容 AstrBot：`>=4.26.0-beta1`，已核对 `4.28.2` 源码及数据库行为；配置页和 ChatUI 的浏览器验收基于 `4.28.1`。本轮未使用 `4.28.2` Dashboard 构建资源重新验收浏览器页面，`4.26/4.27` 保留兼容规则。
+> 兼容 AstrBot：`>=4.26.0-beta1`，保留 `4.26/4.27/4.28` 兼容规则，已核对 `4.28.2` 源码及数据库行为；配置页和 ChatUI 的实页浏览器验收基于 `4.28.1`。`4.29.0-beta.1` 已完成布局、导航和大素材上传适配，并通过隔离的插件路由/multipart 大包入库、前端行为和最小页面样式验证；真实 4.29 Dashboard、原生桌面效果及旧版本浏览器矩阵仍未验收。本轮没有使用 `4.28.2` Dashboard 构建资源重新验收实页。
 
 ## 功能
 
 - 分别上传横屏和竖屏 WebUI 背景素材，并通过真实压缩缩略图库一键切换。
+- 大素材自动分块上传，保留原素材不限固定总量的能力，提供确认进度、有限重试和取消操作。
 - 支持 MP4/WebM 视频、GIF/动态 WebP 和自包含 SVG，提供动态开关、持久化封面和独立素材预览。
 - 从浏览器选择的 Wallpaper Engine 目录识别原视频和静态原图片，一键加入指定方向图库；scene/web/application 专用类型跳过。
 - 支持横屏/竖屏设备自动使用对应壁纸，旋转或拖拽改变方向时会叠化切换。
@@ -63,7 +64,7 @@ git clone https://github.com/Sisyphbaous-DT-Project/astrbot_plugin_palette.git
 
 - 插件名：`astrbot_plugin_palette`
 - 展示名：`AstrBot调色盘`
-- 版本：`0.5.2`
+- 版本：`0.5.3`
 
 ## 使用
 
@@ -77,6 +78,14 @@ git clone https://github.com/Sisyphbaous-DT-Project/astrbot_plugin_palette.git
 
 支持 JPG/JPEG、PNG、WebP、GIF、MP4、WebM、SVG。`0.5.2` 起不再对原图片、视频、SVG 设置插件文件体积上限；文件 MIME 为空或扩展名不准确时以真实内容为准。浏览器解码能力、内存、服务器及反向代理的请求体与超时设置仍会影响超大素材的实际上传和播放。
 
+AstrBot `4.29` 起核心把插件扩展路由的单个 HTTP 请求限制在 `128MiB`（封面、包头和 multipart 包装都计入）。`0.5.3` 新增分块上传：完整上传包（视频/SVG 含封面打包）小于 `16MiB` 时仍走原单次上传；达到 `16MiB` 时自动改用分块接口，按服务端协商的 `8MiB` 固定块长逐块上传，每块都是一次独立小请求，远低于核心限制。分块不等于无限网速或流式播放：进度按服务器确认字节数显示，每步有限重试，块回执丢失会先查询服务器确认位置再继续；可随时取消，服务重启后未完成的传输需重新上传。旧版插件后端不支持分块时，小包仍可上传，大包会明确提示刷新或升级，不会整包硬传。
+
+分块接口不设置原素材总量上限，也不按声明大小预分配文件；上传仍受磁盘空间和部署环境影响。同一页面里，分块上传发生网络失败或入库结果未知时，重试保留原上传身份，并复用已准备的素材包；确认成功并交付当前页面后这次上传结束，删除后重新选择同一文件会开始新的上传。页面离开后恢复原页面实例，尚未交付的成功结果仍保留身份供重试确认，避免重复入库。成功回执只保持素材身份，设置与图库每次读取最新值。入库确认最多等待 `180 秒`，连续三次请求失败会提前结束；结果未知时请先刷新图库核对，原页面重试会继续查询原会话，不会自动再创建上传。刷新页面后不会保留文件或完整断点，会话失效时应先核对图库再重新选择素材。小包旧接口没有服务器会话去重，响应丢失后应先核对图库再决定是否重传。
+
+点击取消会立即停止后续文件。服务器仍在接收分块时可以取消并清理；素材已经开始入库时会继续处理，页面显示正在确认，成功后更新图库和导入标记。小包旧接口和父页面 bridge 没有主动 HTTP 中止能力，已发出请求只能停止本地等待，页面会提示核对结果；不能把本地取消等同于服务器停止。服务重载会等待实际文件读写、校验和封面线程结束，再清理未提交候选，已提交素材继续保留。分块完成还需要把临时上传包复制为正式原素材，服务器应预留两份素材及封面的短时磁盘空间；SVG 校验与封面解码仍随文档复杂度占用内存。
+
+上传完成后的缩略图预览最多等待 `15 秒`；取消或离开页面会结束辅助预览等待，迟到响应不覆盖当前画面，也不影响已经入库的素材。
+
 ### 动态背景与封面
 
 视频默认静音、循环、内联播放。普通 H.264 MP4、VP8/VP9 WebM 是优先支持的编码组合；MP4/WebM 是容器名称，可播放性仍取决于浏览器，本插件不会自动转码。上传时浏览器先读取代表画面生成封面，无法解码时给出错误、不加入图库。
@@ -89,7 +98,7 @@ GIF/动态 WebP 由现有 Pillow 提取代表帧。视频/SVG 的封面由浏览
 
 `dynamic_background_enabled` 默认开启。关闭或系统启用“减少动态效果”时，视频、动图和 SVG 使用持久化静态封面。SVG 不一定有动画，支持范围是图片模式中的常规自包含 SVG/CSS 声明式动画。旧 GIF/动态 WebP 的封面会在首次需要时生成，无需重新上传。
 
-Dashboard 使用带 Bearer 鉴权的 fetch 完整下载素材，再生成本地 Blob URL 播放，不把令牌放进媒体 URL。视频需整段下载后才准备首帧，大视频首次加载会等待更久；远程部署需上传和下载原视频，服务器/反向代理也必须允许对应请求体和超时（设置页 bridge 上传超时约 60 秒）。本版不提供 Range 流式播放，也不承诺大型创意工坊视频均可导入。
+Dashboard 使用带 Bearer 鉴权的 fetch 完整下载素材，再生成本地 Blob URL 播放，不把令牌放进媒体 URL。视频需整段下载后才准备首帧，大视频首次加载会等待更久；远程部署需上传和下载原视频，服务器/反向代理也必须允许对应请求体和超时（设置页 bridge 每个上传请求超时约 60 秒，分块上传按块独立计时）。本版不提供 Range 流式播放，也不承诺大型创意工坊视频均可导入。
 
 `0.5.2` 起默认使用 IndexedDB 本机缓存，首次下载后自动保存原素材和封面，后续刷新、关闭浏览器再打开或重启机器优先读取本地，避免重复下载完整视频。已在 `0.5.1` 或更早版本设置的壁纸也会在升级并刷新 WebUI 后首次使用时自动缓存，无需重新上传、选择或迁移配置；随机轮换到的素材按需缓存，不预先下载全部图库。
 
@@ -114,6 +123,8 @@ Dashboard 使用带 Bearer 鉴权的 fetch 完整下载素材，再生成本地 
 列表显示原文件体积，`0.5.2` 起不再按图片/视频体积禁用导入按钮。失败可重试，同次会话成功条目标记已导入，部分成功不回滚。已有当前背景时只增加素材；目标方向无当前背景时第一项成为当前背景。本版不支持场景渲染、解包、网页执行、录屏转换或读取当前桌面壁纸。
 
 同一页面再次选择同一目录时，按素材相对路径、文件名、体积与修改时间恢复已导入标记；文件变化或不同路径仍可导入，不做跨会话去重。导入过程中只更新状态按钮，保留已经生成的列表预览。多个标签页上传或删除时，原素材处理可并发，最终图库配置更新串行合并，避免成功文件失去图库引用。
+
+分块上传发生网络失败或结果未知时，当前页面的“重试”沿用原上传身份；只有确认入库成功才标记“已导入”。服务器已明确失败或取消的上传，重试会开始新意图；小包旧接口结果未知时应先核对图库。处理阶段点击取消后，如果当项最终成功仍会更新该标记，同时停止后续上传。
 
 ## 配置项
 
@@ -260,6 +271,11 @@ data/plugin_data/astrbot_plugin_palette/dashboard_backups
 | `GET` | `/astrbot_plugin_palette/token-stats` | 获取模型 Token 明细统计 |
 | `POST` | `/astrbot_plugin_palette/upload-background` | 上传背景素材到图库 |
 | `POST` | `/astrbot_plugin_palette/upload-background/<orientation>` | 上传背景素材到横屏或竖屏图库 |
+| `POST` | `/astrbot_plugin_palette/uploads/init` | 创建分块上传会话 |
+| `POST` | `/astrbot_plugin_palette/uploads/<upload_id>/chunk/<index>` | 按确认位置追加上传分块 |
+| `GET` | `/astrbot_plugin_palette/uploads/<upload_id>/status` | 查询分块上传确认位置与结果 |
+| `POST` | `/astrbot_plugin_palette/uploads/<upload_id>/complete` | 完成分块上传并合并入图库 |
+| `POST` | `/astrbot_plugin_palette/uploads/<upload_id>/cancel` | 取消未完成的分块上传 |
 | `POST` | `/astrbot_plugin_palette/backgrounds/select` | 切换当前背景素材 |
 | `POST` | `/astrbot_plugin_palette/backgrounds/delete` | 删除图库背景素材 |
 | `POST` | `/astrbot_plugin_palette/backgrounds/random-select` | 随机切换并写回当前背景 |
@@ -285,6 +301,7 @@ astrbot_palette_dark_theme_bootstrapped=1
 - 高级 CSS 会拦截 `@import` 和外链 `url()`，避免引入外部资源。
 - 背景文件名会被限制为插件生成的本地文件名，避免路径穿越。
 - 原素材按真实文件头与格式校验，插件不限制文件体积；生成的封面仍校验格式、尺寸和体积。
+- 分块上传会话绑定已鉴权用户身份，存储路径与素材 ID 由服务器生成，客户端只能提供显示名和请求标识；块长、序号和总量按会话协商校验，重复块按摘要核对，配置保存成功后不再删除正式素材，过期只清理上传会话自己的临时目录。
 - 新素材按真实内容校验，视频检查容器结构与视频轨道，图片实际解码校验。视频/SVG 必须附带合法封面，全部成功后才入库；旧静态图片直接上传仍支持。
 - SVG 拒绝脚本、事件属性、外部资源、非 SVG 内容、DOCTYPE/实体和不支持的样式转义，仅以图片模式加载、不插入应用 DOM；直读响应附带 `nosniff` 和 CSP sandbox。
 - 沙箱预览通信同时核对 iframe 的 `contentWindow`、同源调色盘设置页路径和素材文件名，只下载本插件素材/封面；不接受任意 URL，不传递登录令牌，关闭预览会取消废弃请求。
@@ -300,6 +317,7 @@ PYTHONPATH=/path/to/AstrBot python -m py_compile main.py palette/*.py
 node --check pages/settings/app.js
 node --check pages/settings/liquid-glass.js
 node --check pages/settings/media.js
+node --check pages/settings/upload.js
 node --check pages/settings/wallpaper-import.js
 node --check palette/media_runtime.js
 node --check palette/media_cache.js

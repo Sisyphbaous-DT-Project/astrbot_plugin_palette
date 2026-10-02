@@ -2,6 +2,15 @@ import { initLiquidGlass } from "./liquid-glass.js";
 import { prepareUpload, initMediaPreview } from "./media.js";
 import { initWallpaperImport } from "./wallpaper-import.js";
 import { initLocalCache } from "./local-cache.js";
+import {
+  parseUploadProtocol,
+  createUploadIntentStore,
+  throwIfAborted,
+  uploadPrepared,
+  configForUploadResult,
+  requestChunkedCancellation,
+  callBridge,
+} from "./upload.js";
 
 const bridge = window.AstrBotPluginPage;
 
@@ -70,6 +79,8 @@ let latestStatus = null;
 let localPreviewUrl = "";
 let localPreviewOrientation = "";
 let remotePreviewDataUrl = "";
+let remotePreviewController = null;
+const PREVIEW_WAIT_MS = 15000;
 let previewOrientation = window.innerHeight > window.innerWidth ? "portrait" : "landscape";
 let pendingDeleteFilename = "";
 let pendingDeleteOrientation = "";
@@ -79,6 +90,15 @@ const customSelects = new Map();
 let customSelectListenersReady = false;
 const liquidGlass = initLiquidGlass();
 let uploading = false;
+// 分块上传能力（status 接口的 upload_protocol），null 表示后端未声明。
+let uploadProtocol = null;
+let uploadAbortController = null;
+// 当前分块会话（init 成功后带 uploadId），供取消控件和 pagehide 使用。
+let activeChunkSession = null;
+const uploadIntents = createUploadIntentStore();
+let uploadPageHidden = false;
+let uploadPageGeneration = 0;
+const cancelUploadButton = document.getElementById("cancel-upload");
 const mediaPreview = initMediaPreview(
   document.getElementById("media-preview-dialog"),
   () => {
@@ -521,30 +541,53 @@ function notifyPaletteRefresh() {
   );
 }
 
-async function loadRemotePreview(config) {
-  remotePreviewDataUrl = "";
-  const filename = getPreviewBackgroundFilename(config);
-  if (!filename) {
-    updatePreview();
-    return;
-  }
-
+async function loadRemotePreview(config, { signal } = {}) {
+  remotePreviewController?.abort();
+  const controller = new AbortController();
+  remotePreviewController = controller;
+  const pageGeneration = uploadPageGeneration;
+  const isPreviewCurrent = () => remotePreviewController === controller &&
+    !uploadPageHidden && uploadPageGeneration === pageGeneration;
+  const cancelPreview = () => controller.abort();
+  if (signal?.aborted) cancelPreview();
+  else signal?.addEventListener("abort", cancelPreview, { once: true });
   try {
-    remotePreviewDataUrl = await getThumbnailDataUrl(filename);
+    if (!isPreviewCurrent() || controller.signal.aborted) return;
+    remotePreviewDataUrl = "";
+    const filename = getPreviewBackgroundFilename(config);
+    const dataUrl = await getThumbnailDataUrl(filename, {
+      signal: controller.signal, isCurrent: isPreviewCurrent,
+    });
+    if (!isPreviewCurrent() || controller.signal.aborted) return;
+    remotePreviewDataUrl = dataUrl;
+    updatePreview();
   } catch (error) {
-    console.warn("[AstrBot调色盘] 壁纸预览读取失败：", error);
+    if (error?.name !== "AbortError" && isPreviewCurrent()) {
+      console.warn("[AstrBot调色盘] 壁纸预览读取失败：", error);
+      updatePreview();
+    }
+  } finally {
+    signal?.removeEventListener("abort", cancelPreview);
+    if (remotePreviewController === controller) remotePreviewController = null;
   }
-  updatePreview();
 }
 
-async function getThumbnailDataUrl(filename) {
-  if (!filename) {
+async function getThumbnailDataUrl(filename, { signal, isCurrent = () => true } = {}) {
+  const pageGeneration = uploadPageGeneration;
+  const isRequestCurrent = () => !uploadPageHidden &&
+    uploadPageGeneration === pageGeneration && isCurrent();
+  throwIfAborted(signal);
+  if (!filename || !isRequestCurrent()) {
     return "";
   }
   if (previewCache.has(filename)) {
     return previewCache.get(filename);
   }
-  const thumbnailResponse = await bridge.apiGet("background-thumbnail", { filename });
+  const thumbnailResponse = await callBridge(
+    () => bridge.apiGet("background-thumbnail", { filename }),
+    { signal, timeout: PREVIEW_WAIT_MS, label: "缩略图读取" },
+  );
+  if (!isRequestCurrent()) return "";
   const dataUrl = thumbnailResponse?.data_url || "";
   if (dataUrl) {
     previewCache.set(filename, dataUrl);
@@ -1017,6 +1060,7 @@ async function loadPaletteState() {
       bridge.apiGet("config"),
     ]);
     latestStatus = status;
+    uploadProtocol = parseUploadProtocol(status);
     clearLocalPreview();
     applyForm(config);
     await loadRemotePreview(config);
@@ -1054,52 +1098,118 @@ async function uploadBackgroundFiles(files, orientation) {
     return false;
   }
   uploading = true;
+  const pageGeneration = uploadPageGeneration;
+  const isUploadCurrent = () => !uploadPageHidden && uploadPageGeneration === pageGeneration;
   mediaPreview.close();
+  uploadAbortController = new AbortController();
   let latestConfig = currentConfig;
   let uploadedCount = 0;
+  let activeFile = null;
+  const confirmedIntents = [];
   setBusy(true);
+  syncCancelUploadButton();
   const orientationLabel = orientation === "portrait" ? "竖屏" : "横屏";
   setStatus(`正在上传 ${mediaFiles.length} 项${orientationLabel}背景素材`);
   try {
     for (const file of mediaFiles) {
+      throwIfAborted(uploadAbortController.signal);
+      activeFile = file;
+      const chunkSession = uploadIntents.acquire(file, orientation);
+      activeChunkSession = chunkSession;
       setStatus(`正在读取并准备封面：${file.name}`);
-      const upload = await prepareUpload(file);
-      const response = await bridge.upload(`upload-background/${orientation}`, upload);
-      latestConfig = response.config;
+      // 未知结果重试复用已准备的包，避免重新生成封面改变原会话参数。
+      const upload = chunkSession.prepared || await prepareUpload(file, uploadAbortController.signal);
+      throwIfAborted(uploadAbortController.signal);
+      chunkSession.prepared = upload;
+      const response = await uploadPrepared(bridge, upload, orientation, {
+        protocol: uploadProtocol,
+        requestId: chunkSession.requestId,
+        signal: uploadAbortController.signal,
+        session: chunkSession,
+        onConfirming: () => {
+          if (isUploadCurrent()) setStatus(
+            uploadAbortController.signal.aborted
+              ? "素材已开始入库，正在确认结果；后续素材已停止"
+              : "素材传输完成，正在确认入库结果",
+          );
+        },
+        onProgress: (progress) => {
+          const done = (progress.receivedBytes / 1048576).toFixed(1);
+          const total = (progress.totalBytes / 1048576).toFixed(1);
+          if (isUploadCurrent()) setStatus(`正在上传：${file.name}（服务器已确认 ${done}/${total} MiB）`);
+        },
+      });
+      // 配置构造临时失败不否定已提交素材，单独读取最新配置。
+      if (!isUploadCurrent()) return false;
+      latestConfig = await configForUploadResult(bridge, response);
+      if (!isUploadCurrent()) return false;
+      // 结果交付当前页面后才结束意图；离开期间成功仍供恢复后的重试核对。
+      confirmedIntents.push({ file, intent: chunkSession });
       uploadedCount += 1;
       setStatus(`已上传 ${uploadedCount}/${mediaFiles.length} 项${orientationLabel}背景素材`);
+      if (uploadAbortController.signal.aborted) break;
     }
     clearLocalPreview();
     previewCache.clear();
     previewOrientation = orientation;
     applyForm(latestConfig);
-    await loadRemotePreview(latestConfig);
+    await loadRemotePreview(latestConfig, { signal: uploadAbortController.signal });
+    if (!isUploadCurrent()) return false;
+    for (const { file, intent } of confirmedIntents) {
+      uploadIntents.finish(file, orientation, intent);
+    }
     notifyPaletteRefresh();
-    setStatus(`已加入${orientationLabel}图库 ${uploadedCount} 项背景素材`, "success");
+    setStatus(
+      `已加入${orientationLabel}图库 ${uploadedCount} 项背景素材${uploadAbortController.signal.aborted ? "，后续素材已停止" : ""}`,
+      "success",
+    );
     return true;
   } catch (error) {
+    if (activeFile && (error?.uploadTerminal || !activeChunkSession?.started)) {
+      uploadIntents.finish(activeFile, orientation, activeChunkSession);
+    }
+    if (!isUploadCurrent()) return false;
     clearLocalPreview();
+    const cancelled = error?.name === "AbortError";
+    const cancelMessage = error?.serverCancelled || !activeChunkSession?.started
+      ? "已取消上传"
+      : "已停止本地等待，请刷新图库确认服务器结果";
     if (uploadedCount > 0 && latestConfig) {
       applyForm(latestConfig);
-      await loadRemotePreview(latestConfig);
+      await loadRemotePreview(latestConfig, { signal: uploadAbortController.signal });
+      if (!isUploadCurrent()) return false;
+      for (const { file, intent } of confirmedIntents) {
+        uploadIntents.finish(file, orientation, intent);
+      }
       notifyPaletteRefresh();
       setStatus(
-        `已加入${orientationLabel}图库 ${uploadedCount} 项，后续素材上传失败：${error?.message || "上传失败"}`,
+        cancelled
+          ? `已加入${orientationLabel}图库 ${uploadedCount} 项，${cancelMessage}`
+          : `已加入${orientationLabel}图库 ${uploadedCount} 项，后续素材上传失败：${error?.message || "上传失败"}`,
         "danger",
       );
     } else if (currentConfig) {
       applyForm(currentConfig);
-      setStatus(error?.message || "上传失败", "danger");
+      setStatus(cancelled ? cancelMessage : error?.message || "上传失败", cancelled ? "muted" : "danger");
     } else {
-      setStatus(error?.message || "上传失败", "danger");
+      setStatus(cancelled ? cancelMessage : error?.message || "上传失败", cancelled ? "muted" : "danger");
     }
     return false;
   } finally {
     uploading = false;
+    uploadAbortController = null;
+    activeChunkSession = null;
+    syncCancelUploadButton();
     setBusy(false);
     if (orientationInputs[orientation]) {
       orientationInputs[orientation].value = "";
     }
+  }
+}
+
+function syncCancelUploadButton() {
+  if (cancelUploadButton) {
+    cancelUploadButton.hidden = !uploading;
   }
 }
 
@@ -1282,6 +1392,29 @@ document.querySelector("[data-close-import]").addEventListener("click", () => {
 
 window.addEventListener("beforeunload", () => {
   clearLocalPreview();
+});
+
+cancelUploadButton?.addEventListener("click", () => {
+  if (!uploading) {
+    return;
+  }
+  uploadAbortController?.abort();
+  void requestChunkedCancellation(bridge, activeChunkSession);
+  setStatus("正在取消上传");
+});
+
+window.addEventListener("pagehide", () => {
+  // 停止后续队列、使旧回调失效，尽力取消在途分块会话；
+  // 卸载消息不保证送达，临时残留由服务端过期清理。
+  uploadPageHidden = true;
+  uploadPageGeneration += 1;
+  remotePreviewController?.abort();
+  uploadAbortController?.abort();
+  void requestChunkedCancellation(bridge, activeChunkSession);
+});
+
+window.addEventListener("pageshow", () => {
+  uploadPageHidden = false;
 });
 
 bridge.onContext((context) => {

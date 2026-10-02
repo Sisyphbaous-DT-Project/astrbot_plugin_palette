@@ -187,6 +187,10 @@ def build_theme_css(config: dict[str, Any]) -> str:
             "",
             _dashboard_shell_css(),
             "",
+            _layout_frame_css(),
+            "",
+            _sidebar_navigation_css(),
+            "",
             _console_surface_css(),
             "",
             _page_specific_surface_css(),
@@ -528,10 +532,12 @@ def _surface_css(stats_card_blur: int) -> str:
             "}",
             "",
             # Chat 的文字/图标按钮由原生状态和专用规则控制，避免常驻底块。
+            # 4.29 新侧栏导航类（dashboard-nav-item/brand-toggle/footer-btn）
+            # 由 _sidebar_navigation_css 保留原生反馈，这里统一排除。
             "html.astrbot-palette-active #app .v-app-bar:not(.chat-mode-header) .v-btn--icon:not(.bg-primary):not(.bg-secondary):not(.bg-success):not(.bg-warning):not(.bg-error):not(.bg-info):not(.bg-darkprimary),",
-            "html.astrbot-palette-active #app .v-navigation-drawer:not(.chat-sidebar) .v-btn:not(.bg-primary):not(.bg-secondary):not(.bg-success):not(.bg-warning):not(.bg-error):not(.bg-info):not(.bg-darkprimary),",
-            "html.astrbot-palette-active #app .v-main .v-list-item--active,",
-            "html.astrbot-palette-active #app .v-navigation-drawer .v-list-item--active {",
+            "html.astrbot-palette-active #app .v-navigation-drawer:not(.chat-sidebar) .v-btn:not(.bg-primary):not(.bg-secondary):not(.bg-success):not(.bg-warning):not(.bg-error):not(.bg-info):not(.bg-darkprimary):not(.dashboard-sidebar-brand-toggle):not(.sidebar-footer-btn),",
+            "html.astrbot-palette-active #app .v-main .v-list-item--active:not(.dashboard-nav-item),",
+            "html.astrbot-palette-active #app .v-navigation-drawer .v-list-item--active:not(.dashboard-nav-item) {",
             f"  background-color: {hover} !important;",
             "  box-shadow: none !important;",
             "}",
@@ -614,6 +620,28 @@ def _readability_css(text_effect: str, icon_effect: str) -> str:
             f"  filter: {icon_effect};",
             "}",
             "",
+            # 4.29 Bot 导航/操作图标从 .v-icon 改用 Lucide SVG：侧栏菜单、
+            # 底部设置、折叠按钮和移动端菜单按钮。只覆盖这些语义类并复用
+            # 同一增强强度，不给图表、Logo 或用户素材的 SVG 加滤镜。
+            "html.astrbot-palette-active[data-astrbot-palette-text-mode=\"soft_shadow\"] #app .leftSidebar .sidebar-lucide-icon,",
+            "html.astrbot-palette-active[data-astrbot-palette-text-mode=\"soft_shadow\"] #app .leftSidebar .sidebar-footer-lucide-icon,",
+            "html.astrbot-palette-active[data-astrbot-palette-text-mode=\"soft_shadow\"] #app .leftSidebar .dashboard-sidebar-panel-toggle-icon,",
+            "html.astrbot-palette-active[data-astrbot-palette-text-mode=\"soft_shadow\"] #app .top-header:not(.chat-mode-header) .header-menu-btn svg,",
+            "html.astrbot-palette-active[data-astrbot-palette-text-mode=\"stroke\"] #app .leftSidebar .sidebar-lucide-icon,",
+            "html.astrbot-palette-active[data-astrbot-palette-text-mode=\"stroke\"] #app .leftSidebar .sidebar-footer-lucide-icon,",
+            "html.astrbot-palette-active[data-astrbot-palette-text-mode=\"stroke\"] #app .leftSidebar .dashboard-sidebar-panel-toggle-icon,",
+            "html.astrbot-palette-active[data-astrbot-palette-text-mode=\"stroke\"] #app .top-header:not(.chat-mode-header) .header-menu-btn svg {",
+            f"  filter: {icon_effect};",
+            "}",
+            "",
+            # off 模式明确关闭新 SVG 增强。
+            "html.astrbot-palette-active[data-astrbot-palette-text-mode=\"off\"] #app .leftSidebar .sidebar-lucide-icon,",
+            "html.astrbot-palette-active[data-astrbot-palette-text-mode=\"off\"] #app .leftSidebar .sidebar-footer-lucide-icon,",
+            "html.astrbot-palette-active[data-astrbot-palette-text-mode=\"off\"] #app .leftSidebar .dashboard-sidebar-panel-toggle-icon,",
+            "html.astrbot-palette-active[data-astrbot-palette-text-mode=\"off\"] #app .top-header:not(.chat-mode-header) .header-menu-btn svg {",
+            "  filter: none !important;",
+            "}",
+            "",
             "html.astrbot-palette-active[data-astrbot-palette-text-mode=\"off\"] #app .v-main,",
             "html.astrbot-palette-active[data-astrbot-palette-text-mode=\"off\"] #app .v-navigation-drawer,",
             "html.astrbot-palette-active[data-astrbot-palette-text-mode=\"off\"] #app .v-app-bar,",
@@ -688,8 +716,10 @@ def _dashboard_shell_css() -> str:
             "",
             # 4.28 配置正文在应用顶栏下方滚动，避免透明顶栏背后穿过正文。
             # 仅改变滚动容器，不添加 filter/transform/contain，浮动按钮仍固定于视口。
+            # 4.29 顶栏改为文档流并定义 --astrbot-toolbar-height，正文只剩扣除
+            # 顶栏后的空间；旧版没有该变量时回退 0px，保持原有 100dvh 行为。
             f"{config_main} {{",
-            "  height: 100dvh !important;",
+            "  height: calc(100dvh - var(--astrbot-toolbar-height, 0px)) !important;",
             "  overflow: hidden !important;",
             "}",
             "",
@@ -747,6 +777,81 @@ def _dashboard_shell_css() -> str:
             "  box-shadow: none !important;",
             "  backdrop-filter: none !important;",
             f"  border-color: {border} !important;",
+            "}",
+        ]
+    )
+
+
+def _layout_frame_css() -> str:
+    return "\n".join(
+        [
+            # 4.29 正文区域改为卡片式外框：左/上 1px 描边和左上 12px 圆角在
+            # 透明壁纸上会露接缝。只清除主布局直属 wrapper 的外框装饰，
+            # 不误伤内部卡片；旧版没有这些装饰，清除为空操作。
+            "html.astrbot-palette-active #app .v-main > .page-wrapper {",
+            "  border-left: none !important;",
+            "  border-top: none !important;",
+            "  border-top-left-radius: 0 !important;",
+            "}",
+            "",
+            # 4.29 非 macOS 给 .v-main 铺侧栏色渐变，深色 Chat 还有一条更强规则，
+            # 调整样式顺序无法压过。用包含 #app 的定向规则显式去渐变，
+            # 同时覆盖普通、macOS 和深色 Chat 三种来源。
+            "html.astrbot-palette-active #app .v-application .v-main {",
+            "  background-color: transparent !important;",
+            "  background-image: none !important;",
+            "}",
+        ]
+    )
+
+
+def _sidebar_navigation_css() -> str:
+    # AstrBot 4.29 侧栏导航语义类（dashboard-nav-item / dashboard-sidebar-brand-toggle /
+    # sidebar-footer-btn）：通用染色规则已在 _surface_css 排除这些类，
+    # 这里按原生状态恢复反馈；旧版没有这些类，规则为空匹配。
+    return "\n".join(
+        [
+            "html.astrbot-palette-active #app .leftSidebar .dashboard-nav-item:hover {",
+            "  background: rgba(var(--v-theme-on-surface), 0.05) !important;",
+            "  background-color: rgba(var(--v-theme-on-surface), 0.05) !important;",
+            "}",
+            "",
+            # 当前项保留原生主色 0.08 底块与主色文字（选中+hover 同样保持），
+            # 不随界面底色或毛玻璃开关消失；毛玻璃模糊由通用滤镜规则负责。
+            "html.astrbot-palette-active #app .leftSidebar .dashboard-nav-item.v-list-item--active:not(.v-list-group__header),",
+            "html.astrbot-palette-active #app .leftSidebar .dashboard-nav-item.v-list-item--active:not(.v-list-group__header):hover {",
+            "  background: rgba(var(--v-theme-primary), 0.08) !important;",
+            "  background-color: rgba(var(--v-theme-primary), 0.08) !important;",
+            "  color: rgb(var(--v-theme-primary)) !important;",
+            "}",
+            "",
+            # 展开分组标题原生保持透明，不因为带 active 加底块。
+            "html.astrbot-palette-active #app .leftSidebar .dashboard-nav-item.v-list-group__header,",
+            "html.astrbot-palette-active #app .leftSidebar .dashboard-nav-item.v-list-group__header.v-list-item--active,",
+            "html.astrbot-palette-active #app .leftSidebar .dashboard-nav-item.v-list-group__header:hover {",
+            "  background: transparent !important;",
+            "  background-color: transparent !important;",
+            "}",
+            "",
+            # 品牌/折叠按钮与侧栏底部设置按钮默认透明，hover/active 沿用原生
+            # 轻底色；不接管颜色、36px 尺寸和 Logo/折叠图标的显隐切换。
+            "html.astrbot-palette-active #app .leftSidebar .dashboard-sidebar-brand-toggle,",
+            "html.astrbot-palette-active #app .leftSidebar .sidebar-footer-btn {",
+            "  background: transparent !important;",
+            "  background-color: transparent !important;",
+            "  box-shadow: none !important;",
+            "}",
+            "",
+            "html.astrbot-palette-active #app .leftSidebar .dashboard-sidebar-brand-toggle:hover,",
+            "html.astrbot-palette-active #app .leftSidebar .dashboard-sidebar-brand-toggle:focus-visible {",
+            "  background: transparent !important;",
+            "  background-color: transparent !important;",
+            "}",
+            "",
+            "html.astrbot-palette-active #app .leftSidebar .sidebar-footer-btn:hover,",
+            "html.astrbot-palette-active #app .leftSidebar .sidebar-footer-btn.v-btn--active {",
+            "  background: rgba(var(--v-theme-on-surface), 0.08) !important;",
+            "  background-color: rgba(var(--v-theme-on-surface), 0.08) !important;",
             "}",
         ]
     )
@@ -2473,6 +2578,16 @@ def _extension_surface_css() -> str:
             "html.astrbot-palette-active #app .v-main .market-plugin-card:hover,",
             "html.astrbot-palette-active #app .v-main .outlined-action-list-item:hover {",
             f"  background: {hover} !important;",
+            "}",
+            "",
+            # 4.29 MCP 批量选择的整行反馈：恢复被通用规则覆盖的原生选中背景
+            # 与边框（选中+hover 同样保持选中反馈），不随界面底色或毛玻璃开关
+            # 消失；未选中项继续走上面的透明/hover 规则，不新增模糊或阴影。
+            "html.astrbot-palette-active #app .v-main .outlined-action-list-item.mcp-server-list-item--selected,",
+            "html.astrbot-palette-active #app .v-main .outlined-action-list-item.mcp-server-list-item--selected:hover {",
+            "  background: rgba(var(--v-theme-primary), 0.06) !important;",
+            "  background-color: rgba(var(--v-theme-primary), 0.06) !important;",
+            "  border-color: rgba(var(--v-theme-primary), 0.5) !important;",
             "}",
             "",
             "html.astrbot-palette-active #app .v-main .plugin-detail-page .docs-markdown th,",

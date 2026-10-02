@@ -36,26 +36,34 @@ class MediaSettingsTest(unittest.TestCase):
         self.assertEqual(
             len(re.findall(r'accept="[^"]*video/mp4,video/webm"', html)), 2
         )
-        self.assertIn("const upload = await prepareUpload(file)", app)
-        self.assertIn("bridge.upload(`upload-background/${orientation}`, upload)", app)
+        self.assertIn("await prepareUpload(file, uploadAbortController.signal)", app)
+        self.assertIn("uploadPrepared(bridge, upload, orientation", app)
         self.assertIn('bridge.apiGet("background-thumbnail", { filename })', app)
         self.assertIn("liquidGlass.updateFilter(imageUrl, config)", app)
         self.assertIn("mediaPreview.close()", app)
+        upload = (ROOT / "pages/settings/upload.js").read_text()
+        self.assertIn("bridge.upload(`upload-background/${orientation}`, file)", upload)
+        # 取消控件接入图库/导入共用的上传流程。
+        self.assertIn('id="cancel-upload"', html)
+        self.assertIn("requestChunkedCancellation", app)
 
     def test_current_versions_are_consistent(self):
-        self.assertIn('VERSION = "0.5.2"', (ROOT / "palette/constants.py").read_text())
-        self.assertIn('version: "0.5.2"', (ROOT / "metadata.yaml").read_text())
-        self.assertIn("当前版本：`0.5.2`", (ROOT / "README.md").read_text())
-        self.assertTrue((ROOT / "changelogs/v0.5.2.md").is_file())
+        self.assertIn('VERSION = "0.5.3"', (ROOT / "palette/constants.py").read_text())
+        self.assertIn('version: "0.5.3"', (ROOT / "metadata.yaml").read_text())
+        self.assertIn("当前版本：`0.5.3`", (ROOT / "README.md").read_text())
+        self.assertIn("## 0.5.3", (ROOT / "CHANGELOG.md").read_text())
+        self.assertTrue((ROOT / "changelogs/v0.5.3.md").is_file())
 
     def test_new_javascript_modules_parse(self):
         for path in (
             "palette/media_runtime.js",
             "palette/media_cache.js",
             "pages/settings/media.js",
+            "pages/settings/upload.js",
             "pages/settings/wallpaper-import.js",
             "pages/settings/local-cache.js",
             "tests/media_cache_browser.cjs",
+            "tests/upload_behavior.cjs",
         ):
             with self.subTest(path=path):
                 result = subprocess.run(
