@@ -1510,15 +1510,16 @@ class AstrBot429LayoutTest(unittest.TestCase):
         found = False
         for match in re.finditer(r"([^{}]+)\{([^{}]*)\}", css):
             selectors, body = match.group(1), match.group(2)
-            if "border-top-left-radius" not in body:
+            if "border-radius: 0 !important;" not in body or "border-left" not in body:
                 continue
             found = True
             # 只允许命中主布局直属 wrapper，不能扩大到内部卡片。
             for selector in selectors.split(","):
                 self.assertIn("#app .v-main > .page-wrapper", selector.strip())
-            self.assertIn("border-left: none !important;", body)
-            self.assertIn("border-top: none !important;", body)
-            self.assertIn("border-top-left-radius: 0 !important;", body)
+            # beta.1 只有左/上描边和左上圆角，beta.2 起四边描边、四角圆角。
+            for side in ("left", "top", "right", "bottom"):
+                self.assertIn(f"border-{side}: none !important;", body)
+            self.assertIn("border-radius: 0 !important;", body)
         self.assertTrue(found, "未找到外框装饰清除规则")
 
     def test_main_area_gradient_removed_with_scoped_rule(self) -> None:
@@ -1535,6 +1536,79 @@ class AstrBot429LayoutTest(unittest.TestCase):
             ),
             "定向规则必须显式输出透明背景并去掉渐变",
         )
+
+
+class AstrBot429Beta2CompatTest(unittest.TestCase):
+    """4.29-beta.2 改名适配：配置方案抽屉、插件页壳新类名，旧类名继续有效。"""
+
+    OLD_DRAWER = "html.astrbot-palette-active .v-overlay-container .config-drawer-card"
+    NEW_DRAWER = "html.astrbot-palette-active .v-overlay-container .config-profile-drawer-card"
+
+    @staticmethod
+    def _rules(css: str) -> list[tuple[list[str], str]]:
+        return [
+            ([part.strip() for part in match.group(1).split(",")], match.group(2))
+            for match in re.finditer(r"([^{}]+)\{([^{}]*)\}", css)
+        ]
+
+    def test_drawer_rules_cover_old_and_new_class_names(self) -> None:
+        # 新旧类名的规则必须成对出现在同一条规则里，保证声明完全一致。
+        rules = self._rules(_css({"surface_opacity": 0.4}))
+        new_rules = [
+            selectors for selectors, _ in rules
+            if any(part.startswith(self.NEW_DRAWER) for part in selectors)
+        ]
+        self.assertTrue(new_rules, "未找到新版抽屉类名规则")
+        for selectors in new_rules:
+            suffixes_new = {
+                part[len(self.NEW_DRAWER):] for part in selectors
+                if part.startswith(self.NEW_DRAWER)
+            }
+            suffixes_old = {
+                part[len(self.OLD_DRAWER):] for part in selectors
+                if part.startswith(self.OLD_DRAWER)
+            }
+            # 头部/内容区的类名前缀随新旧不同，其余后缀必须一一对应。
+            suffixes_new -= {" .config-profile-drawer-header", " .config-profile-drawer-content"}
+            suffixes_old -= {" .config-drawer-header", " .config-drawer-content"}
+            self.assertEqual(suffixes_new, suffixes_old)
+
+    def test_drawer_header_and_content_have_both_names(self) -> None:
+        css = _css({"surface_opacity": 0.4})
+        for selector in (
+            f"{self.OLD_DRAWER} .config-drawer-header",
+            f"{self.OLD_DRAWER} .config-drawer-content",
+            f"{self.NEW_DRAWER} .config-profile-drawer-header",
+            f"{self.NEW_DRAWER} .config-profile-drawer-content",
+        ):
+            self.assertGreaterEqual(_rule_index(css, selector), 0, selector)
+
+    def test_drawer_card_surface_not_left_solid(self) -> None:
+        # 新版抽屉卡片同样走半透明表面且不带模糊，和旧版保持一致。
+        css = _css({"surface_opacity": 0.4})
+        for scope in (self.OLD_DRAWER, self.NEW_DRAWER):
+            bodies = [
+                body for selectors, body in self._rules(css)
+                if scope in selectors and "background: rgba(var(--v-theme-surface)" in body
+            ]
+            self.assertTrue(bodies, f"未找到抽屉表面规则: {scope}")
+            self.assertTrue(
+                any("backdrop-filter: none !important;" in body for body in bodies),
+                scope,
+            )
+
+    def test_plugin_view_shell_classes_are_transparent(self) -> None:
+        css = _css({"surface_opacity": 0.4})
+        bodies = _rules_bodies(css, "#app .plugin-view-frame")
+        self.assertTrue(bodies, "未找到插件页壳 iframe 透明规则")
+        self.assertTrue(any("background: transparent !important;" in body for body in bodies))
+        for old_name, new_name in (
+            ("plugin-page-page", "plugin-view-page"),
+            ("plugin-page-state", "plugin-view-state"),
+            ("plugin-page-frame", "plugin-view-frame"),
+        ):
+            self.assertGreaterEqual(_rule_index(css, f"#app .v-main .{old_name}"), 0)
+            self.assertGreaterEqual(_rule_index(css, f"#app .v-main .{new_name}"), 0)
 
 
 class AstrBot429NavigationTest(unittest.TestCase):

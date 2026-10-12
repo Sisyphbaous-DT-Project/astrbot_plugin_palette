@@ -189,6 +189,20 @@
     }
   }
 
+  // 设置页 iframe 地址：4.26 ~ 4.29-beta.1 走旧的 page/content 路由，
+  // 4.29-beta.2 起改为 /api/v1/plugins/{插件}/views/{页面}/_t/{令牌}/。
+  // 两种前缀互不重叠，同时放行即可兼容新旧版本；令牌由核心签发，这里不解析。
+  var SETTINGS_PAGE_PREFIXES = [
+    "/api/plugin/page/content/astrbot_plugin_palette/settings/",
+    "/api/v1/plugins/astrbot_plugin_palette/views/settings/_t/",
+  ];
+
+  function isPaletteSettingsPath(pathname) {
+    return SETTINGS_PAGE_PREFIXES.some(function (prefix) {
+      return pathname.indexOf(prefix) === 0;
+    });
+  }
+
   function isPaletteSettingsMessage(event, root) {
     // 核心设置页 iframe 是 opaque origin（"null"），必须同时核对
     // contentWindow 和插件页面路径，不能放行所有 null 来源。
@@ -205,7 +219,7 @@
       try {
         var source = new root.URL(frame.getAttribute("src"), root.location.href);
         return source.origin === root.location.origin &&
-          source.pathname.indexOf("/api/plugin/page/content/astrbot_plugin_palette/settings/") === 0;
+          isPaletteSettingsPath(source.pathname);
       } catch (_) {
         return false;
       }

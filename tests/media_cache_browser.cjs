@@ -34,7 +34,7 @@ function settingsBridge() {
     window.AstrBotPluginPage = {
       ready:async()=>({isDark:true}),onContext(){},
       apiGet:async(endpoint,params)=>{
-        if(endpoint==="status")return {plugin:{version:"0.5.3"},injection:{}};
+        if(endpoint==="status")return {plugin:{version:"0.5.4"},injection:{}};
         if(endpoint==="background-thumbnail")return {data_url:""};
         return await (await fetch("${prefix}config",{headers:{Authorization:"Bearer local-cache-test"}})).json();
       }
@@ -78,8 +78,12 @@ const server = http.createServer((req, res) => {
     res.writeHead(200, { "Content-Type": kind === "video" ? "video/mp4" : "image/webp", "Content-Length": bytes.length });
     res.end(bytes); return;
   }
-  const settingsPrefix = "/api/plugin/page/content/astrbot_plugin_palette/settings/";
-  if (pathname.startsWith(settingsPrefix)) {
+  // 旧版 page/content 路由与 4.29-beta.2 起的 views/_t/令牌 路由都提供同一份设置页。
+  const settingsPrefix = [
+    "/api/plugin/page/content/astrbot_plugin_palette/settings/",
+    "/api/v1/plugins/astrbot_plugin_palette/views/settings/_t/TESTTOKEN/",
+  ].find(candidate => pathname.startsWith(candidate));
+  if (settingsPrefix) {
     const name = pathname.slice(settingsPrefix.length) || "index.html";
     if (!/^[a-z.-]+$/.test(name)) { res.writeHead(404); res.end(); return; }
     const file = path.join(root, "pages/settings", name);
@@ -156,6 +160,27 @@ function check(value, message) { assert(value, message); assertions++; }
       const storage = localStorage;
       return storage.getItem("token") === "local-cache-test";
     }), "清理不删除登录状态");
+
+    // 4.29-beta.2 起设置页改走 views/_t/令牌 路径；同样的 opaque 沙箱 iframe
+    // 必须通过来源校验，缓存状态消息才会得到应答。
+    await page.evaluate(() => {
+      const viewsFrame = document.createElement("iframe");
+      viewsFrame.src = "/api/v1/plugins/astrbot_plugin_palette/views/settings/_t/TESTTOKEN/?theme=light";
+      viewsFrame.setAttribute("sandbox", "allow-scripts allow-forms allow-downloads");
+      viewsFrame.style.width = "390px"; viewsFrame.style.height = "840px"; viewsFrame.id = "settings-views";
+      document.body.append(viewsFrame);
+    });
+    let viewsFrame = null;
+    for (let attempt = 0; attempt < 50 && !viewsFrame; attempt++) {
+      viewsFrame = page.frames().find(candidate => candidate.url().includes("/views/settings/_t/"));
+      if (!viewsFrame) await page.waitForTimeout(100);
+    }
+    check(viewsFrame, "views/_t 路径的设置页已加载");
+    await viewsFrame.waitForFunction(() => document.querySelector("#local-cache-status")?.textContent.includes("普通缓存"));
+    check(await viewsFrame.evaluate(() => {
+      try { localStorage.getItem("token"); return false; } catch (_) { return true; }
+    }), "新路径同样是 opaque 沙箱，缓存状态消息通过来源校验");
+    await page.evaluate(() => document.querySelector("#settings-views").remove());
 
     // 验证普通 LRU 与大素材例外，用小预算执行相同算法，避免写入真实 GB 数据。
     const policy = await page.evaluate(async () => {

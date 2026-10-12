@@ -167,7 +167,8 @@ def build_theme_css(config: dict[str, Any]) -> str:
             "html.astrbot-palette-active .v-application__wrap,",
             "html.astrbot-palette-active .v-main,",
             "html.astrbot-palette-active #app .page-wrapper,",
-            "html.astrbot-palette-active #app .plugin-page-frame {",
+            "html.astrbot-palette-active #app .plugin-page-frame,",
+            "html.astrbot-palette-active #app .plugin-view-frame {",
             "  background: transparent !important;",
             "}",
             "",
@@ -785,13 +786,16 @@ def _dashboard_shell_css() -> str:
 def _layout_frame_css() -> str:
     return "\n".join(
         [
-            # 4.29 正文区域改为卡片式外框：左/上 1px 描边和左上 12px 圆角在
-            # 透明壁纸上会露接缝。只清除主布局直属 wrapper 的外框装饰，
-            # 不误伤内部卡片；旧版没有这些装饰，清除为空操作。
+            # 4.29 正文区域改为卡片式外框：1px 描边和 12px 圆角在透明壁纸上
+            # 会露接缝。beta.1 只有左/上描边和左上圆角，beta.2 起四边描边、
+            # 四角圆角，这里一并清除。只处理主布局直属 wrapper，不误伤内部卡片；
+            # 旧版没有这些装饰，清除为空操作。
             "html.astrbot-palette-active #app .v-main > .page-wrapper {",
             "  border-left: none !important;",
             "  border-top: none !important;",
-            "  border-top-left-radius: 0 !important;",
+            "  border-right: none !important;",
+            "  border-bottom: none !important;",
+            "  border-radius: 0 !important;",
             "}",
             "",
             # 4.29 非 macOS 给 .v-main 铺侧栏色渐变，深色 Chat 还有一条更强规则，
@@ -2008,6 +2012,30 @@ def _stats_highlight_css(stats_card_blur: int) -> str:
     )
 
 
+# 配置方案抽屉：4.29-beta.2 起改为共用组件 ConfigProfileDrawer，卡片/头部/内容
+# 类名由 config-drawer-* 改为 config-profile-drawer-*。新旧类名并存以兼容旧版，
+# 两套选择器只做同样的事，不会同时出现在同一个页面。
+_CONFIG_DRAWER_SCOPES = (
+    "html.astrbot-palette-active .v-overlay-container .config-drawer-card",
+    "html.astrbot-palette-active .v-overlay-container .config-profile-drawer-card",
+)
+
+
+def _config_drawer(suffix: str = "") -> list[str]:
+    """返回新旧两套抽屉卡片类名下、带相同后代后缀的选择器。"""
+    return [scope + suffix for scope in _CONFIG_DRAWER_SCOPES]
+
+
+def _config_drawer_parts() -> list[str]:
+    """抽屉头部与内容区：类名前缀随抽屉卡片新旧而不同。"""
+    return [
+        f"{_CONFIG_DRAWER_SCOPES[0]} .config-drawer-header",
+        f"{_CONFIG_DRAWER_SCOPES[0]} .config-drawer-content",
+        f"{_CONFIG_DRAWER_SCOPES[1]} .config-profile-drawer-header",
+        f"{_CONFIG_DRAWER_SCOPES[1]} .config-profile-drawer-content",
+    ]
+
+
 def _config_tabs_css() -> str:
     tab_shadow = (
         "0 1px 4px rgba(0, 0, 0, 0.44), "
@@ -2018,33 +2046,33 @@ def _config_tabs_css() -> str:
         "html.astrbot-palette-active #app .v-main .config-panel .config-tabs",
         "html.astrbot-palette-active #app .v-main .config-panel .config-tabs.v-tabs",
         "html.astrbot-palette-active #app .v-main .config-panel .config-tabs .v-slide-group",
-        "html.astrbot-palette-active .v-overlay-container .config-drawer-card .config-tabs",
-        "html.astrbot-palette-active .v-overlay-container .config-drawer-card .config-tabs.v-tabs",
-        "html.astrbot-palette-active .v-overlay-container .config-drawer-card .config-tabs .v-slide-group",
+        *_config_drawer(" .config-tabs"),
+        *_config_drawer(" .config-tabs.v-tabs"),
+        *_config_drawer(" .config-tabs .v-slide-group"),
     ]
     tab_buttons = [
         "html.astrbot-palette-active #app .v-main .config-panel .config-tabs .v-tab",
         "html.astrbot-palette-active #app .v-main .config-panel .config-tabs .v-btn.v-tab",
-        "html.astrbot-palette-active .v-overlay-container .config-drawer-card .config-tabs .v-tab",
-        "html.astrbot-palette-active .v-overlay-container .config-drawer-card .config-tabs .v-btn.v-tab",
+        *_config_drawer(" .config-tabs .v-tab"),
+        *_config_drawer(" .config-tabs .v-btn.v-tab"),
     ]
     active_tabs = [
         "html.astrbot-palette-active #app .v-main .config-panel .config-tabs .v-tab.v-tab--selected",
         "html.astrbot-palette-active #app .v-main .config-panel .config-tabs .v-tab.v-btn--active",
         "html.astrbot-palette-active #app .v-main .config-panel .config-tabs .v-tab.v-slide-group-item--active",
-        "html.astrbot-palette-active .v-overlay-container .config-drawer-card .config-tabs .v-tab.v-tab--selected",
-        "html.astrbot-palette-active .v-overlay-container .config-drawer-card .config-tabs .v-tab.v-btn--active",
-        "html.astrbot-palette-active .v-overlay-container .config-drawer-card .config-tabs .v-tab.v-slide-group-item--active",
+        *_config_drawer(" .config-tabs .v-tab.v-tab--selected"),
+        *_config_drawer(" .config-tabs .v-tab.v-btn--active"),
+        *_config_drawer(" .config-tabs .v-tab.v-slide-group-item--active"),
     ]
     overlays = [
         "html.astrbot-palette-active #app .v-main .config-panel .config-tabs .v-tab .v-btn__overlay",
         "html.astrbot-palette-active #app .v-main .config-panel .config-tabs .v-tab .v-btn__underlay",
-        "html.astrbot-palette-active .v-overlay-container .config-drawer-card .config-tabs .v-tab .v-btn__overlay",
-        "html.astrbot-palette-active .v-overlay-container .config-drawer-card .config-tabs .v-tab .v-btn__underlay",
+        *_config_drawer(" .config-tabs .v-tab .v-btn__overlay"),
+        *_config_drawer(" .config-tabs .v-tab .v-btn__underlay"),
     ]
     sliders = [
         "html.astrbot-palette-active #app .v-main .config-panel .config-tabs .v-tab__slider",
-        "html.astrbot-palette-active .v-overlay-container .config-drawer-card .config-tabs .v-tab__slider",
+        *_config_drawer(" .config-tabs .v-tab__slider"),
     ]
     return "\n".join(
         [
@@ -2542,9 +2570,13 @@ def _extension_surface_css() -> str:
             "html.astrbot-palette-active #app .v-main .plugin-detail-page .handler-card tr,",
             "html.astrbot-palette-active #app .v-main .plugin-detail-page .handler-card td,",
             "html.astrbot-palette-active #app .v-main .plugin-detail-page .docs-card,",
+            # 4.29-beta.2 起插件页壳类名由 plugin-page-* 改为 plugin-view-*，新旧并存。
             "html.astrbot-palette-active #app .v-main .plugin-page-page,",
             "html.astrbot-palette-active #app .v-main .plugin-page-state,",
             "html.astrbot-palette-active #app .v-main .plugin-page-frame,",
+            "html.astrbot-palette-active #app .v-main .plugin-view-page,",
+            "html.astrbot-palette-active #app .v-main .plugin-view-state,",
+            "html.astrbot-palette-active #app .v-main .plugin-view-frame,",
             "html.astrbot-palette-active #app .v-main .market-plugin-card,",
             "html.astrbot-palette-active #app .v-main .extension-card,",
             "html.astrbot-palette-active #app .v-main .extension-card-text,",
@@ -2704,9 +2736,6 @@ def _platform_dialog_surface_css() -> str:
         "html.astrbot-palette-active .v-overlay-container .v-dialog "
         ".v-card:has(.route-source-cell)"
     )
-    config_drawer = (
-        "html.astrbot-palette-active .v-overlay-container .config-drawer-card"
-    )
 
     solid_surfaces = [
         route_card,
@@ -2725,43 +2754,42 @@ def _platform_dialog_surface_css() -> str:
         f"{route_card} .v-table__wrapper > table > tbody > tr > td",
         f"{route_card} .v-table__wrapper > table > thead > tr > th",
         f"{route_card} .v-data-table-footer",
-        f"{config_drawer}",
-        f"{config_drawer} .config-drawer-header",
-        f"{config_drawer} .config-drawer-content",
-        f"{config_drawer} .config-page",
-        f"{config_drawer} .config-panel",
-        f"{config_drawer} .config-toolbar",
-        f"{config_drawer} .config-content",
-        f"{config_drawer} .config-section",
-        f"{config_drawer} .config-item",
-        f"{config_drawer} .config-item-wrapper",
-        f"{config_drawer} .nested-container",
-        f"{config_drawer} .object-config",
-        f"{config_drawer} .simple-config",
-        f"{config_drawer} .array-item",
-        f"{config_drawer} .object-item",
-        f"{config_drawer} .v-banner.unsaved-changes-banner",
+        *_config_drawer(),
+        *_config_drawer_parts(),
+        *_config_drawer(" .config-page"),
+        *_config_drawer(" .config-panel"),
+        *_config_drawer(" .config-toolbar"),
+        *_config_drawer(" .config-content"),
+        *_config_drawer(" .config-section"),
+        *_config_drawer(" .config-item"),
+        *_config_drawer(" .config-item-wrapper"),
+        *_config_drawer(" .nested-container"),
+        *_config_drawer(" .object-config"),
+        *_config_drawer(" .simple-config"),
+        *_config_drawer(" .array-item"),
+        *_config_drawer(" .object-item"),
+        *_config_drawer(" .v-banner.unsaved-changes-banner"),
     ]
     soft_surfaces = [
         f"{route_card} .v-table__wrapper > table > tbody > tr:hover",
         f"{route_card} .v-field",
         f"{route_card} .v-list",
         f"{route_card} .route-source-mode-link",
-        f"{config_drawer} .v-card",
-        f"{config_drawer} .config-page .v-card",
-        f"{config_drawer} .config-row:hover",
-        f"{config_drawer} .collapsed-config-toggle-row",
-        f"{config_drawer} .plugin-set-display-row",
-        f"{config_drawer} .persona-preview-row",
-        f"{config_drawer} .selected-plugins-full-width",
-        f"{config_drawer} .template-list-editor",
-        f"{config_drawer} .object-editor",
-        f"{config_drawer} .config-item-card",
-        f"{config_drawer} .list-config-item",
-        f"{config_drawer} .storage-cleanup-panel",
-        f"{config_drawer} .v-field",
-        f"{config_drawer} .v-list",
-        f"{config_drawer} .v-list-item",
+        *_config_drawer(" .v-card"),
+        *_config_drawer(" .config-page .v-card"),
+        *_config_drawer(" .config-row:hover"),
+        *_config_drawer(" .collapsed-config-toggle-row"),
+        *_config_drawer(" .plugin-set-display-row"),
+        *_config_drawer(" .persona-preview-row"),
+        *_config_drawer(" .selected-plugins-full-width"),
+        *_config_drawer(" .template-list-editor"),
+        *_config_drawer(" .object-editor"),
+        *_config_drawer(" .config-item-card"),
+        *_config_drawer(" .list-config-item"),
+        *_config_drawer(" .storage-cleanup-panel"),
+        *_config_drawer(" .v-field"),
+        *_config_drawer(" .v-list"),
+        *_config_drawer(" .v-list-item"),
     ]
     bordered = [
         f"{route_card} .v-data-table",
@@ -2770,13 +2798,13 @@ def _platform_dialog_surface_css() -> str:
         f"{route_card} .v-table__wrapper > table > thead > tr > th",
         f"{route_card} .v-table__wrapper > table > tbody > tr > td",
         f"{route_card} .v-field",
-        f"{config_drawer}",
-        f"{config_drawer} .v-divider",
-        f"{config_drawer} .config-section",
-        f"{config_drawer} .config-row",
-        f"{config_drawer} .config-item",
-        f"{config_drawer} .nested-container",
-        f"{config_drawer} .v-field",
+        *_config_drawer(),
+        *_config_drawer(" .v-divider"),
+        *_config_drawer(" .config-section"),
+        *_config_drawer(" .config-row"),
+        *_config_drawer(" .config-item"),
+        *_config_drawer(" .nested-container"),
+        *_config_drawer(" .v-field"),
     ]
 
     return "\n".join(

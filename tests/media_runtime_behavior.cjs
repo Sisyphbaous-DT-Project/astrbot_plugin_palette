@@ -561,6 +561,34 @@ async function testPreviewBridge() {
   assert(!isPaletteSettingsMessage(event, root));
   await callbacks.message(event);
   assert.equal(responses.length, 1);
+  // 4.29-beta.2 起设置页改走 views/_t/令牌 路径，新旧地址都必须放行，
+  // 其它插件、其它页面、令牌段之前的越界路径仍然拒绝。
+  const palettePaths = [
+    "/api/plugin/page/content/astrbot_plugin_palette/settings/?theme=dark",
+    "/api/v1/plugins/astrbot_plugin_palette/views/settings/_t/TOKEN.abc-def/?asset_token=TOKEN.abc-def&theme=dark",
+    "https://test.example/api/v1/plugins/astrbot_plugin_palette/views/settings/_t/TOKEN/index.html",
+  ];
+  for (const accepted of palettePaths) {
+    path = accepted;
+    assert(isPaletteSettingsMessage(event, root), `应放行 ${accepted}`);
+    responses.length = 0;
+    await callbacks.message(event);
+    assert.equal(responses.length, 1, `应响应 ${accepted}`);
+  }
+  const rejectedPaths = [
+    "/api/v1/plugins/other-plugin/views/settings/_t/TOKEN/",
+    "/api/v1/plugins/astrbot_plugin_palette/views/other/_t/TOKEN/",
+    "/api/v1/plugins/astrbot_plugin_palette/views/settings/",
+    "/api/v1/plugins/astrbot_plugin_palette/views/settings/_t/../../other/views/x/_t/T/",
+    "https://attacker.example/api/v1/plugins/astrbot_plugin_palette/views/settings/_t/TOKEN/",
+  ];
+  for (const rejected of rejectedPaths) {
+    path = rejected;
+    assert(!isPaletteSettingsMessage(event, root), `应拒绝 ${rejected}`);
+    responses.length = 0;
+    await callbacks.message(event);
+    assert.equal(responses.length, 0, `不应响应 ${rejected}`);
+  }
   bridge.destroy();
   assert(!callbacks.message);
 }
