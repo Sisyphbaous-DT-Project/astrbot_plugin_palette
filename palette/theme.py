@@ -5,6 +5,10 @@ from typing import Any
 
 from .chat_theme import build_chat_theme_css
 from .constants import VERSION
+from .glass import NOT_COLORED, build_glass_tokens
+from .glass import backdrop_filter_lines as _backdrop_filter_lines
+from .overlay_theme import build_overlay_css
+from .page_glass_theme import build_page_glass_css
 
 _ADVANCED_CSS_BLOCKED_AT_RULE = re.compile(r"@import\b", re.IGNORECASE)
 _EXTERNAL_URL = re.compile(r"url\(\s*(['\"]?)(https?:|//)", re.IGNORECASE)
@@ -200,7 +204,7 @@ def build_theme_css(config: dict[str, Any]) -> str:
             "",
             _config_tabs_css(),
             "",
-            _settings_surface_css(),
+            _settings_surface_css(stats_card_blur),
             "",
             _extension_surface_css(),
             "",
@@ -217,6 +221,10 @@ def build_theme_css(config: dict[str, Any]) -> str:
             _extension_loading_dialog_css(),
             "",
             _astrbot_update_dialog_surface_css(),
+            "",
+            build_page_glass_css(stats_card_blur),
+            "",
+            build_overlay_css(stats_card_blur),
             "",
             build_chat_theme_css(),
             "",
@@ -989,19 +997,6 @@ def _page_specific_surface_css() -> str:
             "}",
         ]
     )
-
-
-def _backdrop_filter_lines(blur: int) -> list[str]:
-    # blur(0px) 仍会触发浏览器的滤镜合成，关闭时必须输出 none
-    if blur <= 0:
-        return [
-            "  backdrop-filter: none !important;",
-            "  -webkit-backdrop-filter: none !important;",
-        ]
-    return [
-        f"  backdrop-filter: blur({blur}px) saturate(1.08) !important;",
-        f"  -webkit-backdrop-filter: blur({blur}px) saturate(1.08) !important;",
-    ]
 
 
 def _stats_highlight_css(stats_card_blur: int) -> str:
@@ -2276,8 +2271,14 @@ def _token_stats_detail_css() -> str:
     )
 
 
-def _settings_surface_css() -> str:
-    surface = "rgba(var(--v-theme-surface), var(--astrbot-palette-surface-opacity, 0))"
+def _settings_surface_css(stats_card_blur: int) -> str:
+    blur = max(0, min(40, stats_card_blur))
+    tokens = build_glass_tokens(blur)
+    glass = tokens.enabled
+    # 毛玻璃开启时内层行/表格只留分割线，由外层卡片承担底色与模糊；
+    # 关闭时保持原有的按界面透明度染色。
+    inner_surface = "transparent" if glass else tokens.surface
+    inner_border = tokens.divider if glass else tokens.border
     primary_soft = (
         "rgba(var(--v-theme-primary), "
         "calc(var(--astrbot-palette-surface-opacity, 0) * 0.12))"
@@ -2286,93 +2287,118 @@ def _settings_surface_css() -> str:
         "rgba(var(--v-theme-on-surface), "
         "calc(var(--astrbot-palette-surface-opacity, 0) * 0.08))"
     )
-    border = (
-        "rgba(var(--v-theme-on-surface), "
-        "calc(var(--astrbot-palette-surface-opacity, 0) * 0.18))"
-    )
-    divider = (
-        "rgba(var(--v-theme-on-surface), "
-        "calc(var(--astrbot-palette-surface-opacity, 0) * 0.14))"
-    )
+    page = "html.astrbot-palette-active #app .v-main .settings-page"
+    not_colored = NOT_COLORED
+    # v-card 载体需带 :not 链，把特异度抬到与通用 .v-card 复位规则持平，
+    # 后置顺序才能让背景模糊胜出。
+    carriers = [
+        f"{page} .settings-list-card",
+        f"{page} .system-config-group .v-card{not_colored}",
+        f"{page} .storage-cleanup-card",
+    ]
+    table_parts = [
+        f"{page} .settings-table-wrap",
+        f"{page} .settings-table-wrap .v-table",
+        f"{page} .settings-table-wrap table",
+        f"{page} .settings-table-wrap thead",
+        f"{page} .settings-table-wrap tbody",
+        f"{page} .settings-table-wrap tr",
+        f"{page} .settings-table-wrap th",
+        f"{page} .settings-table-wrap td",
+    ]
+    inner = [
+        f"{page} .settings-item",
+        f"{page} .system-config-group .config-section",
+        f"{page} .system-config-group .config-row",
+        # 嵌套对象配置的行包装层（.object-config > .config-item）原本也被染了一层。
+        f"{page} .system-config-group .config-item",
+        f"{page} .system-config-group .property-info .v-list-item",
+        f"{page} .api-key-panel",
+        *table_parts,
+        f"{page} .storage-cleanup-panel",
+    ]
+    dividers = [
+        f"{page} .settings-item",
+        f"{page} .system-config-group .config-divider",
+        f"{page} .system-config-group .collapsed-config-toggle-row",
+        f"{page} .settings-table-wrap th",
+        f"{page} .settings-table-wrap td",
+    ]
     return "\n".join(
         [
-            "html.astrbot-palette-active #app .v-main .settings-page {",
-            "  --settings-border: "
-            "rgba(var(--v-theme-on-surface), "
-            "calc(var(--astrbot-palette-surface-opacity, 0) * 0.18));",
-            "  --settings-divider: "
-            "rgba(var(--v-theme-on-surface), "
-            "calc(var(--astrbot-palette-surface-opacity, 0) * 0.14));",
+            f"{page} {{",
+            f"  --settings-border: {tokens.border};",
+            f"  --settings-divider: {tokens.divider};",
             "  background: transparent !important;",
             "}",
             "",
-            "html.astrbot-palette-active #app .v-main .settings-page .settings-list-card,",
-            "html.astrbot-palette-active #app .v-main .settings-page .settings-item,",
-            "html.astrbot-palette-active #app .v-main .settings-page .system-config-group .v-card,",
-            "html.astrbot-palette-active #app .v-main .settings-page .system-config-group .config-section,",
-            "html.astrbot-palette-active #app .v-main .settings-page .system-config-group .config-row,",
-            "html.astrbot-palette-active #app .v-main .settings-page .system-config-group .property-info .v-list-item,",
-            "html.astrbot-palette-active #app .v-main .settings-page .api-key-panel,",
-            "html.astrbot-palette-active #app .v-main .settings-page .settings-table-wrap,",
-            "html.astrbot-palette-active #app .v-main .settings-page .settings-table-wrap .v-table,",
-            "html.astrbot-palette-active #app .v-main .settings-page .settings-table-wrap table,",
-            "html.astrbot-palette-active #app .v-main .settings-page .settings-table-wrap thead,",
-            "html.astrbot-palette-active #app .v-main .settings-page .settings-table-wrap tbody,",
-            "html.astrbot-palette-active #app .v-main .settings-page .settings-table-wrap tr,",
-            "html.astrbot-palette-active #app .v-main .settings-page .settings-table-wrap th,",
-            "html.astrbot-palette-active #app .v-main .settings-page .settings-table-wrap td,",
-            "html.astrbot-palette-active #app .v-main .settings-page .storage-cleanup-panel,",
-            "html.astrbot-palette-active #app .v-main .settings-page .storage-cleanup-card {",
-            f"  background: {surface} !important;",
-            "  box-shadow: none !important;",
-            "  backdrop-filter: none !important;",
-            f"  border-color: {border} !important;",
+            # 外层玻璃载体：只有这一组执行真实的背景模糊。
+            ",\n".join(carriers) + " {",
+            f"  background: {tokens.surface} !important;",
+            f"  background-color: {tokens.surface} !important;",
+            f"  border-color: {tokens.border} !important;",
+            f"  box-shadow: {tokens.shadow} !important;",
+            *_backdrop_filter_lines(blur),
             "}",
             "",
-            "html.astrbot-palette-active #app .v-main .settings-page .settings-item,",
-            "html.astrbot-palette-active #app .v-main .settings-page .system-config-group .config-divider,",
-            "html.astrbot-palette-active #app .v-main .settings-page .system-config-group .collapsed-config-toggle-row,",
-            "html.astrbot-palette-active #app .v-main .settings-page .settings-table-wrap th,",
-            "html.astrbot-palette-active #app .v-main .settings-page .settings-table-wrap td {",
-            f"  border-color: {divider} !important;",
-            "}",
-            "",
-            "html.astrbot-palette-active #app .v-main .settings-page .settings-nav__item:hover,",
-            "html.astrbot-palette-active #app .v-main .settings-page .settings-nav__item--active,",
-            "html.astrbot-palette-active #app .v-main .settings-page .system-config-group .config-row:hover,",
-            "html.astrbot-palette-active #app .v-main .settings-page .system-config-group .collapsed-config-toggle-row,",
-            "html.astrbot-palette-active #app .v-main .settings-page .api-key-name-cell code,",
-            "html.astrbot-palette-active #app .v-main .settings-page .storage-cleanup-chip,",
-            "html.astrbot-palette-active #app .v-main .settings-page .storage-cleanup-action {",
-            f"  background: {neutral_soft} !important;",
-            "  box-shadow: none !important;",
-            "}",
-            "",
-            "html.astrbot-palette-active #app .v-main .settings-page .settings-nav__item--active::before {",
-            "  background: "
-            "rgba(var(--v-theme-on-surface), "
-            "calc(var(--astrbot-palette-surface-opacity, 0) * 0.52)) !important;",
-            "}",
-            "",
-            "html.astrbot-palette-active #app .v-main .settings-page .system-config-restart-bar {",
-            f"  background: {surface} !important;",
+            # 内层行、表格、面板：不再叠加底色与滤镜。
+            ",\n".join(inner) + " {",
+            f"  background: {inner_surface} !important;",
             "  box-shadow: none !important;",
             "  backdrop-filter: none !important;",
             "  -webkit-backdrop-filter: none !important;",
-            f"  border: 1px solid {border} !important;",
+            f"  border-color: {inner_border} !important;",
             "}",
             "",
-            "html.astrbot-palette-active #app .v-main .settings-page .system-config-restart-bar__button {",
+            ",\n".join(dividers) + " {",
+            f"  border-color: {tokens.divider} !important;",
+            "}",
+            "",
+            # 悬停行、折叠开关行等小块状态底色仍随界面透明度。设置页左侧导航
+            # 项的悬停/选中底色与选中竖条沿用原生固定值，不在此接管，避免
+            # 透明度为 0 时选中态消失。
+            f"{page} .system-config-group .config-row:hover,",
+            f"{page} .system-config-group .collapsed-config-toggle-row,",
+            f"{page} .api-key-name-cell code,",
+            f"{page} .storage-cleanup-chip,",
+            f"{page} .storage-cleanup-action {{",
             f"  background: {neutral_soft} !important;",
             "  box-shadow: none !important;",
             "}",
             "",
-            "html.astrbot-palette-active #app .v-main .settings-page .api-key-panel .v-chip:not(.bg-primary):not(.bg-secondary):not(.bg-success):not(.bg-warning):not(.bg-error):not(.bg-info),",
-            "html.astrbot-palette-active #app .v-main .settings-page .api-key-panel .v-btn:not(.bg-primary):not(.bg-secondary):not(.bg-success):not(.bg-warning):not(.bg-error):not(.bg-info),",
-            "html.astrbot-palette-active #app .v-main .settings-page .settings-item__control .v-btn:not(.bg-primary):not(.bg-secondary):not(.bg-success):not(.bg-warning):not(.bg-error):not(.bg-info) {",
+            # 窄屏下导航项原生变为实色 surface 块，恢复透明并保留原生三态。
+            "@media (max-width: 720px) {",
+            f"  {page} .settings-nav__item {{",
+            "    background: transparent !important;",
+            f"    border-color: {tokens.border} !important;",
+            "  }",
+            "",
+            f"  {page} .settings-nav__item:hover {{",
+            "    background: rgba(var(--v-theme-on-surface), 0.045) !important;",
+            "  }",
+            "",
+            f"  {page} .settings-nav__item--active,",
+            f"  {page} .settings-nav__item--active:hover {{",
+            "    background: rgba(var(--v-theme-on-surface), 0.07) !important;",
+            "  }",
+            "}",
+            "",
+            # 需要重启提示条：原生自带 16px 模糊，被通用规则压成透明后补回，
+            # 跟随界面毛玻璃强度。
+            f"{page} .system-config-restart-bar {{",
+            f"  background: {tokens.surface_strong} !important;",
+            f"  background-color: {tokens.surface_strong} !important;",
+            f"  box-shadow: {tokens.shadow} !important;",
+            *_backdrop_filter_lines(blur),
+            f"  border: 1px solid {tokens.border} !important;",
+            "}",
+            "",
+            f"{page} .api-key-panel .v-chip{not_colored},",
+            f"{page} .api-key-panel .v-btn{not_colored},",
+            f"{page} .settings-item__control .v-btn{not_colored} {{",
             f"  background: {primary_soft} !important;",
             "  box-shadow: none !important;",
-            f"  border-color: {border} !important;",
+            f"  border-color: {tokens.border} !important;",
             "}",
         ]
     )
@@ -2463,7 +2489,21 @@ def _component_management_surface_css(stats_card_blur: int) -> str:
             f"  background-color: {surface} !important;",
             f"  border-color: {border} !important;",
             f"  box-shadow: {shadow} !important;",
+            # 原生分段按钮组只有 4px 直角，与同页 14px 圆角的筛选框不协调；
+            # 首尾按钮同步圆角，否则外轮廓的边框会被容器裁出缺口。
+            "  border-radius: 14px !important;",
+            "  overflow: hidden !important;",
             *_backdrop_filter_lines(blur),
+            "}",
+            "",
+            ",\n".join(f"{item} > .v-btn:first-child" for item in component_surfaces)
+            + " {",
+            "  border-radius: 14px 0 0 14px !important;",
+            "}",
+            "",
+            ",\n".join(f"{item} > .v-btn:last-child" for item in component_surfaces)
+            + " {",
+            "  border-radius: 0 14px 14px 0 !important;",
             "}",
             "",
             ",\n".join(fields) + " {",

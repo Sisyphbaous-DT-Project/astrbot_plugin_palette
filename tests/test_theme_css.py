@@ -30,18 +30,26 @@ def _rules_bodies(css: str, selector_suffix: str) -> list[str]:
     return bodies
 
 
-def _media_block(css: str, media_query: str) -> str:
-    """按大括号配平提取整个媒体查询块。"""
+def _media_block(css: str, media_query: str, marker: str | None = None) -> str:
+    """按大括号配平提取媒体查询块；同一查询出现多次时用 marker 挑选目标块。"""
     start = css.index(media_query)
-    depth = 0
-    for index in range(start, len(css)):
-        if css[index] == "{":
-            depth += 1
-        elif css[index] == "}":
-            depth -= 1
-            if depth == 0:
-                return css[start : index + 1]
-    return css[start:]
+    while True:
+        depth = 0
+        end = len(css)
+        for index in range(start, len(css)):
+            if css[index] == "{":
+                depth += 1
+            elif css[index] == "}":
+                depth -= 1
+                if depth == 0:
+                    end = index + 1
+                    break
+        block = css[start:end]
+        if marker is None or marker in block:
+            return block
+        start = css.find(media_query, end)
+        if start < 0:
+            raise ValueError(f"未找到包含 {marker} 的 {media_query} 块")
 
 
 def _rule_index(css: str, selector_part: str, body_marker: str | None = None) -> int:
@@ -902,7 +910,7 @@ class AstrBot428TransparencyDetailTest(unittest.TestCase):
 
     def test_mobile_config_nav_rules_only_inside_720_media(self) -> None:
         css = _css()
-        block = _media_block(css, "@media (max-width: 720px)")
+        block = _media_block(css, "@media (max-width: 720px)", "config-workspace__nav-item")
         self.assertIn(".config-panel .config-workspace__nav-item", block)
         outside = css.replace(block, "")
         self.assertNotIn(
@@ -912,7 +920,7 @@ class AstrBot428TransparencyDetailTest(unittest.TestCase):
         )
 
     def test_mobile_config_nav_states(self) -> None:
-        block = _media_block(_css(), "@media (max-width: 720px)")
+        block = _media_block(_css(), "@media (max-width: 720px)", "config-workspace__nav-item")
         normal = _rules_bodies(block, ".config-panel .config-workspace__nav-item")
         hover = _rules_bodies(block, ".config-panel .config-workspace__nav-item:hover")
         active = _rules_bodies(
@@ -944,7 +952,7 @@ class AstrBot428TransparencyDetailTest(unittest.TestCase):
         # 单独的 --active 选择器特异度（1-4-1）低于 :hover（1-4-2），
         # 缺少 --active:hover 组合规则时，选中项悬停会退回 0.045 悬停色；
         # 该断言确保误删组合选择器时测试失败。
-        block = _media_block(_css(), "@media (max-width: 720px)")
+        block = _media_block(_css(), "@media (max-width: 720px)", "config-workspace__nav-item")
         combo = _rules_bodies(
             block, ".config-panel .config-workspace__nav-item--active:hover"
         )
