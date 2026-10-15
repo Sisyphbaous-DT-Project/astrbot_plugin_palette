@@ -4,6 +4,7 @@ import re
 from typing import Any
 
 from .chat_theme import build_chat_theme_css
+from .console_theme import build_console_css
 from .constants import VERSION
 from .glass import NOT_COLORED, build_glass_tokens
 from .glass import backdrop_filter_lines as _backdrop_filter_lines
@@ -225,6 +226,8 @@ def build_theme_css(config: dict[str, Any]) -> str:
             build_page_glass_css(stats_card_blur),
             "",
             build_overlay_css(stats_card_blur),
+            "",
+            build_console_css(stats_card_blur),
             "",
             build_chat_theme_css(),
             "",
@@ -525,7 +528,8 @@ def _surface_css(stats_card_blur: int) -> str:
             "html.astrbot-palette-active #app .v-main .composer-shell,",
             "html.astrbot-palette-active #app .v-main .project-composer-shell,",
             "html.astrbot-palette-active #app .v-main .standalone-composer,",
-            "html.astrbot-palette-active #app .v-main .console-page,",
+            # 控制台页最外层比里面的卡片左右各宽 12px，再铺一层底色会在卡片背后
+            # 露出一圈深色边框，卡片自身的底色由下方 console-page 规则承担。
             "html.astrbot-palette-active #app .v-main .plugin-detail-page,",
             "html.astrbot-palette-active #app .v-main .stats-page,",
             "html.astrbot-palette-active #app .v-main .trace-page,",
