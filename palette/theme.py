@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from .attached_dialog_theme import build_attached_dialog_css
 from .chat_theme import build_chat_theme_css
 from .console_theme import build_console_css
 from .constants import VERSION
@@ -10,6 +11,7 @@ from .glass import NOT_COLORED, build_glass_tokens
 from .glass import backdrop_filter_lines as _backdrop_filter_lines
 from .overlay_theme import build_overlay_css
 from .page_glass_theme import build_page_glass_css
+from .trace_theme import build_trace_css
 
 _ADVANCED_CSS_BLOCKED_AT_RULE = re.compile(r"@import\b", re.IGNORECASE)
 _EXTERNAL_URL = re.compile(r"url\(\s*(['\"]?)(https?:|//)", re.IGNORECASE)
@@ -228,6 +230,10 @@ def build_theme_css(config: dict[str, Any]) -> str:
             build_overlay_css(stats_card_blur),
             "",
             build_console_css(stats_card_blur),
+            "",
+            build_attached_dialog_css(),
+            "",
+            build_trace_css(stats_card_blur),
             "",
             build_chat_theme_css(),
             "",
@@ -1324,10 +1330,11 @@ def _stats_highlight_css(stats_card_blur: int) -> str:
             "  -webkit-backdrop-filter: none !important;",
             "}",
             "",
-            # 4.28 Trace 页：主卡片底色由 --trace-card 变量驱动（亮主题实色
-            # #f5f6f7、暗主题 on-surface 0.06），用 !important 接管为普通玻璃
-            # 表面，同时压住 .trace-page.is-dark 的暗色变体；.trace-card 是
-            # 本页唯一新增的模糊载体。
+            # 4.28～4.29.1 Trace 页：主卡片底色由 --trace-card 变量驱动
+            # （亮主题实色 #f5f6f7、暗主题 on-surface 0.06），用 !important
+            # 接管为普通玻璃表面，同时压住 .trace-page.is-dark 的暗色变体；
+            # .trace-card 是旧版本页唯一新增的模糊载体。4.29.3 起的新骨架
+            # 由 trace_theme.py 接管，以下旧规则继续保留。
             "html.astrbot-palette-active #app .v-main .trace-page {",
             f"  --trace-card: {surface} !important;",
             "}",
