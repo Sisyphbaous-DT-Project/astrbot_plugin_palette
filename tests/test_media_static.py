@@ -48,11 +48,11 @@ class MediaSettingsTest(unittest.TestCase):
         self.assertIn("requestChunkedCancellation", app)
 
     def test_current_versions_are_consistent(self):
-        self.assertIn('VERSION = "0.5.7"', (ROOT / "palette/constants.py").read_text())
-        self.assertIn('version: "0.5.7"', (ROOT / "metadata.yaml").read_text())
-        self.assertIn("当前版本：`0.5.7`", (ROOT / "README.md").read_text())
-        self.assertIn("## 0.5.7", (ROOT / "CHANGELOG.md").read_text())
-        self.assertTrue((ROOT / "changelogs/v0.5.7.md").is_file())
+        self.assertIn('VERSION = "0.5.8"', (ROOT / "palette/constants.py").read_text())
+        self.assertIn('version: "0.5.8"', (ROOT / "metadata.yaml").read_text())
+        self.assertIn("当前版本：`0.5.8`", (ROOT / "README.md").read_text())
+        self.assertIn("## 0.5.8", (ROOT / "CHANGELOG.md").read_text())
+        self.assertTrue((ROOT / "changelogs/v0.5.8.md").is_file())
 
     def test_new_javascript_modules_parse(self):
         for path in (

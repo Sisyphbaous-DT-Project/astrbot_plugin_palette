@@ -11,6 +11,7 @@ from .glass import NOT_COLORED, build_glass_tokens
 from .glass import backdrop_filter_lines as _backdrop_filter_lines
 from .overlay_theme import build_overlay_css
 from .page_glass_theme import build_page_glass_css
+from .selector_dialog_theme import build_selector_dialog_css
 from .trace_theme import build_trace_css
 
 _ADVANCED_CSS_BLOCKED_AT_RULE = re.compile(r"@import\b", re.IGNORECASE)
@@ -229,6 +230,8 @@ def build_theme_css(config: dict[str, Any]) -> str:
             "",
             build_overlay_css(stats_card_blur),
             "",
+            build_selector_dialog_css(stats_card_blur),
+            "",
             build_console_css(stats_card_blur),
             "",
             build_attached_dialog_css(),
@@ -278,7 +281,6 @@ def _floating_scrollbar_css() -> str:
             f"  --astrbot-scrollbar-thumb-active: {thumb_active};",
             "  --astrbot-scrollbar-thumb-border: transparent;",
             f"  --astrbot-scrollbar-thumb-shadow: {thumb_shadow};",
-            "  scrollbar-color: var(--astrbot-scrollbar-thumb) transparent;",
             "  scrollbar-gutter: auto;",
             "}",
             "",
@@ -292,11 +294,27 @@ def _floating_scrollbar_css() -> str:
             "html.astrbot-palette-active #app .v-navigation-drawer,",
             "html.astrbot-palette-active #app .v-overlay-container,",
             "html.astrbot-palette-active .v-overlay-container {",
-            "  scrollbar-color: var(--astrbot-scrollbar-thumb) transparent !important;",
             "  scrollbar-gutter: auto !important;",
             "}",
             "",
-            "html.astrbot-palette-active * {",
+            # Chromium 121 起，元素上只要有非 auto 的 scrollbar-color，就会忽略
+            # 下方全部 ::-webkit-scrollbar 样式并回退为默认宽度、带箭头的滚动条。
+            # AstrBot 4.29.4 起上游也只给火狐设置这两个属性，这里同样限定为不支持
+            # webkit 滚动条伪元素的浏览器；4.29.3 及更早版本上游仍对所有元素设置
+            # thin 和颜色（颜色取自上方根节点的变量），外观与此前一致。
+            "@supports not selector(::-webkit-scrollbar) {",
+            "  html.astrbot-palette-active,",
+            "  html.astrbot-palette-active * {",
+            "    scrollbar-color: var(--astrbot-scrollbar-thumb) transparent !important;",
+            "  }",
+            "}",
+            "",
+            # 上游单独设了 scrollbar-width: thin 的区域在 Chromium 下本就不读 webkit
+            # 样式，必须保留颜色，否则会露出浏览器默认的灰色轨道：聊天输入框与已发送
+            # 消息的附件条、添加供应商弹窗的内容区。
+            "html.astrbot-palette-active .attachments-preview,",
+            "html.astrbot-palette-active .sent-attachments,",
+            "html.astrbot-palette-active .source-dialog__body {",
             "  scrollbar-color: var(--astrbot-scrollbar-thumb) transparent !important;",
             "}",
             "",
