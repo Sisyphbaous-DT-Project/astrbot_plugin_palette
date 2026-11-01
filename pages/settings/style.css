@@ -1537,6 +1537,11 @@ body.liquid-glass-fallback .gallery-delete {
   align-items: center;
   gap: 12px 18px;
 }
+/* 全局 button 设置了 display，需显式让 hidden 生效 */
+#desktop-ui-extension[hidden],
+#desktop-ui-extension [hidden] {
+  display: none;
+}
 .media-settings small {
   color: var(--ab-ink-muted);
   flex-basis: 100%;

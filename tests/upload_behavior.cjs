@@ -56,6 +56,7 @@ function makeAppHarness(mod, media, bridge, { realPreview = false } = {}) {
     cancelUploadButton: { addEventListener: (_, handler) => { listeners.cancel = handler; } },
     window: { addEventListener: (event, handler) => { listeners[event] = handler; } },
     setStatus: (text) => statuses.push(text), setBusy() {}, clearLocalPreview() {},
+    cancelDesktopUiExtensionRequest() {},
     applyForm: (config) => { assert(config, "成功响应缺 config 时必须先补读"); applied.push(config); },
     loadRemotePreview: async () => {}, notifyPaletteRefresh: () => refreshes.push(true),
     getPreviewBackgroundFilename: (config) => config.filename || "",

@@ -194,5 +194,49 @@ class MobileSidebarGlassSchemaAndDocsTest(unittest.TestCase):
         self.assertIn("独立", _README)
 
 
+class SettingsDesktopUiExtensionTest(unittest.TestCase):
+    def test_desktop_controls_and_upgrade_hint_present(self) -> None:
+        self.assertIn('id="desktop-ui-extension"', _INDEX_HTML)
+        self.assertIn('id="desktop-ui-extension-request"', _INDEX_HTML)
+        self.assertIn("允许在桌面版中美化界面", _INDEX_HTML)
+        self.assertIn('id="desktop-ui-extension-result"', _INDEX_HTML)
+        self.assertIn('id="desktop-ui-extension-upgrade"', _INDEX_HTML)
+        self.assertIn("需要使用支持该功能的桌面版，或改用源码、Docker 部署", _INDEX_HTML)
+        self.assertIn("renderDesktopUiExtension(status)", _APP_JS)
+        self.assertIn("desktop.ui_extensions === true", _APP_JS)
+        self.assertIn("#desktop-ui-extension[hidden]", _STYLE_CSS)
+        # 全局 button 的 display 会盖过浏览器默认的 hidden，按钮必须被这条规则覆盖
+        self.assertIn("#desktop-ui-extension [hidden]", _STYLE_CSS)
+
+    def test_request_and_response_types_and_identity_checks(self) -> None:
+        self.assertIn('"astrbot-desktop:plugin-ui-extension-request"', _APP_JS)
+        self.assertIn('"astrbot-desktop:plugin-ui-extension-response"', _APP_JS)
+        self.assertIn("event.source !== window.parent", _APP_JS)
+        self.assertIn("event.origin !== parentOrigin", _APP_JS)
+        self.assertIn("data.requestId !== requestId", _APP_JS)
+        self.assertIn("type: DESKTOP_UI_EXTENSION_REQUEST, requestId", _APP_JS)
+
+    def test_request_has_timeout_and_lifecycle_cleanup(self) -> None:
+        self.assertIn("DESKTOP_UI_EXTENSION_TIMEOUT_MS = 60000", _APP_JS)
+        self.assertIn("window.removeEventListener(\"message\", pending.onMessage)", _APP_JS)
+        self.assertIn("window.clearTimeout(pending.timer)", _APP_JS)
+        pagehide = _APP_JS.split('window.addEventListener("pagehide"', 1)[1]
+        self.assertIn("cancelDesktopUiExtensionRequest();", pagehide[:500])
+        self.assertIn("等待桌面版授权超时，授权未完成，可稍后重试。", _APP_JS)
+
+    def test_all_authorization_result_reasons_have_complete_messages(self) -> None:
+        for reason in ("granted", "declined", "disabled", "busy", "invalid", "error"):
+            self.assertIn(f"{reason}:", _APP_JS)
+        for message in (
+            "已授权并生效，若未出现效果请刷新桌面版主界面。",
+            "本次 Desktop 运行内已拒绝，重启后可重试。",
+            "请在桌面版托盘中开启“允许插件界面扩展”后重试。",
+            "另一个授权弹窗正在等待处理，请先完成后再试。",
+            "插件身份未被识别，请刷新或升级桌面版后重试。",
+            "桌面版未完成授权，可稍后重试。",
+        ):
+            self.assertIn(message, _APP_JS)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -17,6 +17,14 @@ const bridge = window.AstrBotPluginPage;
 const form = document.getElementById("settings-form");
 const statusText = document.getElementById("status-text");
 const statusList = document.getElementById("status-list");
+const desktopUiExtensionPanel = document.getElementById("desktop-ui-extension");
+const desktopUiExtensionButton = document.getElementById("desktop-ui-extension-request");
+const desktopUiExtensionResult = document.getElementById("desktop-ui-extension-result");
+const desktopUiExtensionUpgrade = document.getElementById("desktop-ui-extension-upgrade");
+const DESKTOP_UI_EXTENSION_REQUEST = "astrbot-desktop:plugin-ui-extension-request";
+const DESKTOP_UI_EXTENSION_RESPONSE = "astrbot-desktop:plugin-ui-extension-response";
+const DESKTOP_UI_EXTENSION_TIMEOUT_MS = 60000;
+let desktopUiExtensionRequest = null;
 const refreshButton = document.getElementById("refresh");
 const saveButton = document.getElementById("save");
 const recalculateThemeButton = document.getElementById("recalculate-theme");
@@ -899,8 +907,70 @@ function syncRotationInputs() {
   rotationIntervalInput.disabled = !rotationEnabledInput.checked;
 }
 
+function finishDesktopUiExtensionRequest(requestId, message) {
+  const pending = desktopUiExtensionRequest;
+  if (!pending || pending.requestId !== requestId) return;
+  desktopUiExtensionRequest = null;
+  window.clearTimeout(pending.timer);
+  window.removeEventListener("message", pending.onMessage);
+  desktopUiExtensionButton.disabled = false;
+  desktopUiExtensionResult.textContent = message;
+}
+
+function cancelDesktopUiExtensionRequest() {
+  if (desktopUiExtensionRequest) {
+    finishDesktopUiExtensionRequest(
+      desktopUiExtensionRequest.requestId,
+      "授权未完成，可稍后重试。",
+    );
+  }
+}
+
+function renderDesktopUiExtension(status) {
+  const desktop = status.desktop || {};
+  const available = desktop.client === true && desktop.ui_extensions === true;
+  desktopUiExtensionPanel.hidden = desktop.client !== true;
+  desktopUiExtensionButton.hidden = !available;
+  desktopUiExtensionUpgrade.hidden = desktop.client !== true || available;
+  if (desktop.client !== true || !available) cancelDesktopUiExtensionRequest();
+}
+
+function requestDesktopUiExtension() {
+  if (desktopUiExtensionRequest) return;
+  const requestId = `palette-desktop-ui-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const parentOrigin = window.location.origin;
+  const onMessage = (event) => {
+    const data = event.data;
+    if (event.source !== window.parent || event.origin !== parentOrigin ||
+        data?.type !== DESKTOP_UI_EXTENSION_RESPONSE || data.requestId !== requestId) return;
+    const messages = {
+      granted: "已授权并生效，若未出现效果请刷新桌面版主界面。",
+      declined: "本次 Desktop 运行内已拒绝，重启后可重试。",
+      disabled: "请在桌面版托盘中开启“允许插件界面扩展”后重试。",
+      busy: "另一个授权弹窗正在等待处理，请先完成后再试。",
+      invalid: "插件身份未被识别，请刷新或升级桌面版后重试。",
+      error: "桌面版未完成授权，可稍后重试。",
+    };
+    const reason = data.reason === "granted" && data.granted !== true ? "error" : data.reason;
+    finishDesktopUiExtensionRequest(requestId, messages[reason] || messages.error);
+  };
+  const pending = { requestId, onMessage, timer: 0 };
+  desktopUiExtensionRequest = pending;
+  desktopUiExtensionButton.disabled = true;
+  desktopUiExtensionResult.textContent = "正在等待桌面版授权，请在原生弹窗中确认。";
+  window.addEventListener("message", onMessage);
+  pending.timer = window.setTimeout(() => {
+    finishDesktopUiExtensionRequest(
+      requestId,
+      "等待桌面版授权超时，授权未完成，可稍后重试。",
+    );
+  }, DESKTOP_UI_EXTENSION_TIMEOUT_MS);
+  window.parent.postMessage({ type: DESKTOP_UI_EXTENSION_REQUEST, requestId }, "*");
+}
+
 function renderStatus(status, config) {
   latestStatus = status;
+  renderDesktopUiExtension(status);
   const injection = status.injection || {};
   const injectionSourceLabels = {
     custom: "自定义 WebUI",
@@ -1304,6 +1374,8 @@ async function recalculateThemeColors() {
   }
 }
 
+desktopUiExtensionButton.addEventListener("click", requestDesktopUiExtension);
+
 refreshButton.addEventListener("click", () => {
   void loadPaletteState().then(() => notifyPaletteRefresh());
 });
@@ -1406,6 +1478,7 @@ cancelUploadButton?.addEventListener("click", () => {
 window.addEventListener("pagehide", () => {
   // 停止后续队列、使旧回调失效，尽力取消在途分块会话；
   // 卸载消息不保证送达，临时残留由服务端过期清理。
+  cancelDesktopUiExtensionRequest();
   uploadPageHidden = true;
   uploadPageGeneration += 1;
   remotePreviewController?.abort();

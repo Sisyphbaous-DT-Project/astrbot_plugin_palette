@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -549,6 +550,176 @@ class InjectorDashboardTargetTest(unittest.TestCase):
         self.assertNotIn(
             INJECTION_START_MARKER, (custom / "index.html").read_text(encoding="utf-8")
         )
+
+
+class PackagedDesktopInjectionTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.root = Path(tempfile.mkdtemp(prefix="palette-desktop-injection-"))
+        self.addCleanup(shutil.rmtree, self.root, ignore_errors=True)
+        self.paths = _FakePaths(self.root)
+        injector._PREPARED_FALLBACK_DISTS.clear()
+        self.addCleanup(injector._PREPARED_FALLBACK_DISTS.clear)
+
+    def _snapshot_files(self) -> dict[str, bytes]:
+        return {
+            str(path.relative_to(self.root)): path.read_bytes()
+            for path in self.root.rglob("*")
+            if path.is_file()
+        }
+
+    def test_packaged_desktop_returns_before_resolution_without_any_writes(self) -> None:
+        user_dist = self.paths.user_dashboard_dist
+        user_dist.mkdir(parents=True)
+        (user_dist / "index.html").write_text(_INDEX_HTML, encoding="utf-8")
+        (user_dist / injector._FALLBACK_RESTART_MARKER).write_text(
+            "keep\n", encoding="utf-8"
+        )
+        self.paths.patch_backup_dir.mkdir(parents=True)
+        (self.paths.patch_backup_dir / "existing.html").write_bytes(b"keep\x00bytes")
+        before = self._snapshot_files()
+
+        with (
+            mock.patch.dict(
+                os.environ,
+                {
+                    "ASTRBOT_DESKTOP_CLIENT": "1",
+                    "ASTRBOT_DESKTOP_PLUGIN_UI_EXTENSIONS": "1",
+                },
+                clear=True,
+            ),
+            mock.patch.object(
+                injector, "_resolve_dashboard_target"
+            ) as resolve_target,
+        ):
+            ensured = injector.ensure_dashboard_injection(self.paths)
+            inspected = injector.inspect_injection(self.paths)
+
+        resolve_target.assert_not_called()
+        for status in (ensured, inspected):
+            self.assertFalse(status.supported)
+            self.assertFalse(status.patched)
+            self.assertFalse(status.index_exists)
+            self.assertEqual(status.target, "")
+            self.assertFalse(status.restart_required)
+        self.assertEqual(self._snapshot_files(), before)
+
+    def test_packaged_desktop_capability_messages(self) -> None:
+        cases = (
+            (True, "桌面版通过插件界面扩展加载调色盘，请在设置页授权。"),
+            (
+                False,
+                "当前桌面版不支持插件界面扩展，需要使用支持该功能的桌面版，或改用源码、Docker 部署。",
+            ),
+        )
+        for capable, expected in cases:
+            with self.subTest(capable=capable):
+                environment = {"ASTRBOT_DESKTOP_CLIENT": "1"}
+                if capable:
+                    environment["ASTRBOT_DESKTOP_PLUGIN_UI_EXTENSIONS"] = "1"
+                with (
+                    mock.patch.dict(os.environ, environment, clear=True),
+                    mock.patch.object(
+                        injector, "_resolve_dashboard_target"
+                    ) as resolve_target,
+                ):
+                    ensured = injector.ensure_dashboard_injection(self.paths)
+                    inspected = injector.inspect_injection(self.paths)
+                self.assertEqual(ensured.message, expected)
+                self.assertEqual(inspected.message, expected)
+                resolve_target.assert_not_called()
+
+    def test_managed_only_keeps_legacy_injection(self) -> None:
+        user_dist = self.paths.user_dashboard_dist
+        user_dist.mkdir(parents=True)
+        index = user_dist / "index.html"
+        index.write_text(_INDEX_HTML, encoding="utf-8")
+        with (
+            mock.patch.dict(
+                os.environ, {"ASTRBOT_DESKTOP_MANAGED": "1"}, clear=True
+            ),
+            mock.patch.object(injector, "resolve_dashboard_dist", lambda: user_dist),
+        ):
+            ensured = injector.ensure_dashboard_injection(self.paths)
+            inspected = injector.inspect_injection(self.paths)
+        self.assertTrue(ensured.patched)
+        self.assertTrue(inspected.patched)
+        self.assertIn(INJECTION_START_MARKER, index.read_text(encoding="utf-8"))
+
+
+class BootstrapDesktopExtensionTest(unittest.TestCase):
+    def test_extension_script_is_the_exact_injection_bootstrap(self) -> None:
+        script = injector.build_desktop_ui_extension_script()
+        self.assertIn(script, injector._build_injection_block())
+        for url in injector._build_bootstrap_urls():
+            self.assertIn(json.dumps(url), script)
+
+    def test_complete_bootstrap_runs_only_once_in_one_window(self) -> None:
+        script = injector.build_desktop_ui_extension_script()
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".js", encoding="utf-8", delete=False
+        ) as handle:
+            handle.write(script)
+            script_path = Path(handle.name)
+        runner = r'''
+const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const vm = require("node:vm");
+const requests = [];
+const storage = new Map();
+const document = { visibilityState: "visible", hidden: false };
+const window = {
+  document,
+  location: { origin: "http://palette.test" },
+  localStorage: {
+    getItem: (key) => storage.get(key) || "",
+    setItem: (key, value) => storage.set(key, value),
+    removeItem: (key) => storage.delete(key),
+  },
+  innerWidth: 1000,
+  innerHeight: 700,
+  addEventListener() {},
+  removeEventListener() {},
+  setTimeout() { return 0; },
+  clearTimeout() {},
+  setInterval() { return 0; },
+  clearInterval() {},
+  matchMedia() { return { matches: false, addEventListener() {}, addListener() {} }; },
+};
+const context = {
+  window,
+  self: window,
+  document,
+  navigator: {},
+  console,
+  URL,
+  AbortController,
+  DOMException,
+  Blob,
+  fetch(url) {
+    requests.push(url);
+    return new Promise(() => {});
+  },
+};
+vm.createContext(context);
+const source = fs.readFileSync(process.argv[1], "utf8");
+vm.runInContext(source, context);
+vm.runInContext(source, context);
+assert.equal(window.__astrbotPaletteBootstrapped, true);
+assert.equal(requests.length, 1);
+assert.match(requests[0], /\/config/);
+console.log("完整 bootstrap 防重入验证通过");
+'''
+        try:
+            result = subprocess.run(
+                ["node", "-e", runner, str(script_path)],
+                capture_output=True,
+                text=True,
+                timeout=60,
+            )
+        finally:
+            script_path.unlink(missing_ok=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("防重入验证通过", result.stdout)
 
 
 _ENV_427 = '''

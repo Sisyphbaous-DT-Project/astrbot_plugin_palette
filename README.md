@@ -6,7 +6,7 @@
 
 AstrBot调色盘是一个 AstrBot WebUI 美化插件，提供背景图库、本机缓存、透明界面、Liquid Glass 设置页、文字可读性增强和壁纸主题色联动，让 Dashboard 可以在不修改 AstrBot 源码的前提下换上自定义壁纸。
 
-> 当前版本：`0.5.8`
+> 当前版本：`0.5.9`
 >
 > 兼容 AstrBot：`>=4.26.0-beta1`，`4.26.0-beta.1` 至今（已核对到 `4.29.4`）的全部版本均可使用；各版本的具体核对记录见 [更新日志](CHANGELOG.md)。
 
@@ -64,7 +64,7 @@ git clone https://github.com/Sisyphbaous-DT-Project/astrbot_plugin_palette.git
 
 - 插件名：`astrbot_plugin_palette`
 - 展示名：`AstrBot调色盘`
-- 版本：`0.5.8`
+- 版本：`0.5.9`
 
 ## 使用
 
@@ -75,6 +75,25 @@ git clone https://github.com/Sisyphbaous-DT-Project/astrbot_plugin_palette.git
 5. 在对应缩略图库中点击素材，切换该方向的当前 WebUI 背景。
 6. 按喜好调整透明度、遮罩、背景滤镜、文字增强、随机背景、定时轮换和主题色联动。
 7. 保存后刷新 WebUI，背景会自动应用到 Dashboard。
+
+### AstrBot Desktop 使用
+
+`0.5.9` 在打包桌面版（后端带有 `ASTRBOT_DESKTOP_CLIENT=1`）中不会读取、注入或复制 WebUI 入口，也不会创建入口备份或处理重启标记，避免破坏 Desktop 的完整性校验。
+
+- 桌面版提供插件界面扩展能力（`ASTRBOT_DESKTOP_PLUGIN_UI_EXTENSIONS=1`）时，打开调色盘设置页，点击“允许在桌面版中美化界面”，再在 Desktop 原生确认框中允许。只有已经逐个授权且在 Core 中启用的插件会加载界面脚本；若没有立即出现效果，请刷新桌面版主界面。
+- 可以在 Desktop 托盘中关闭“允许插件界面扩展”或清除插件界面授权。已经运行的脚本不能安全反向执行，因此停用或撤销后 Desktop 会刷新主窗口使其失效。
+- 不支持插件界面扩展的桌面版不能通过本插件美化，设置页会提示需要使用支持该功能的桌面版，或改用源码、Docker 部署。只有 `ASTRBOT_DESKTOP_MANAGED=1` 的开发态或自定义启动仍走原有注入逻辑；源码、Docker 和普通浏览器部署也保持原方式。
+
+#### 旧版已改写入口时恢复
+
+已经被旧版调色盘改写 WebUI、导致 Desktop 无法启动时，插件无法在后端未运行的情况下自行修复。按以下顺序恢复：
+
+1. 完全退出 Desktop。
+2. 删除 AstrBot 数据目录下的 `data/plugins/astrbot_plugin_palette`，或把它替换为 `0.5.9`；保留 `plugin_data` 即可保留图库与设置。否则旧插件可能在下次启动时再次改写入口。
+3. 安装版通过启动失败页的“下载完整安装包”重新安装；便携版把新压缩包解压到一个新文件夹，恢复原版 `webui`，不要继续覆盖旧目录。
+4. 再启动 Desktop。
+
+**不要依赖 `dashboard_backups` 恢复打包版 WebUI。** 旧版在 Windows 上使用文本读写备份，可能把换行转换成 CRLF；即使文字看起来相同，文件摘要也会与原始安装文件不一致，无法通过 Desktop 校验。
 
 支持 JPG/JPEG、PNG、WebP、GIF、MP4、WebM、SVG。`0.5.2` 起不再对原图片、视频、SVG 设置插件文件体积上限；文件 MIME 为空或扩展名不准确时以真实内容为准。浏览器解码能力、内存、服务器及反向代理的请求体与超时设置仍会影响超大素材的实际上传和播放。
 
@@ -221,7 +240,7 @@ Dashboard 会监听视口方向变化。浏览器从竖屏切到横屏时，会�
 
 本插件不会修改 AstrBot 源码。
 
-为了让 Dashboard 主页面能加载插件主题，本插件会在运行时向 AstrBot 当前实际服务的 WebUI 入口注入一段带标记的启动脚本。AstrBot `4.27.x` 起，插件把 `--webui-dir` 显式目录交给其公开 `resolve_dashboard_dist` 解析，并跟随核心的实际选择：核心接受显式目录则注入该目录；桌面托管模式（`ASTRBOT_DESKTOP_MANAGED=1`）下核心拒绝版本不匹配或资源不完整的显式目录时，插件跟随核心改选合格的 `data/dist` 或内置目录，核心未选出可用目录时不执行注入；`4.26.x` 保持兼容回退，显式目录优先，否则沿用旧版辅助函数判断，从而同时覆盖兼容的 `data/dist` 和内置 `astrbot/dashboard/dist`。
+为了让 Dashboard 主页面能加载插件主题，普通部署会在运行时向 AstrBot 当前实际服务的 WebUI 入口注入一段带标记的启动脚本；打包 Desktop 则改为由 Desktop 在用户授权后，通过 Core 鉴权接口加载同一份脚本，不触碰安装目录。AstrBot `4.27.x` 起，插件把 `--webui-dir` 显式目录交给其公开 `resolve_dashboard_dist` 解析，并跟随核心的实际选择：核心接受显式目录则注入该目录；非打包的桌面托管模式（只有 `ASTRBOT_DESKTOP_MANAGED=1`）下核心拒绝版本不匹配或资源不完整的显式目录时，插件跟随核心改选合格的 `data/dist` 或内置目录，核心未选出可用目录时不执行注入；`4.26.x` 保持兼容回退，显式目录优先，否则沿用旧版辅助函数判断，从而同时覆盖兼容的 `data/dist` 和内置 `astrbot/dashboard/dist`。
 
 使用 `--webui-dir` 时建议传入实际存在的绝对路径，不要依赖 `~` 展开；如果自定义启动器直接通过程序接口传入目录，也应同时保留命令行参数，否则插件无法自动获知该目录。
 
@@ -261,10 +280,11 @@ data/plugin_data/astrbot_plugin_palette/dashboard_backups
 
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
-| `GET` | `/astrbot_plugin_palette/status` | 获取插件版本、路径和注入状态 |
+| `GET` | `/astrbot_plugin_palette/status` | 获取插件版本、路径、注入状态与 Desktop 能力 |
 | `GET` | `/astrbot_plugin_palette/config` | 获取当前公开配置 |
 | `POST` | `/astrbot_plugin_palette/config` | 保存配置 |
 | `GET` | `/astrbot_plugin_palette/theme.css` | 获取运行时主题 CSS |
+| `GET` | `/astrbot_plugin_palette/desktop-ui-extension.js` | 获取 Desktop 授权后加载的完整界面扩展脚本 |
 | `GET` | `/astrbot_plugin_palette/background-preview` | 获取当前背景预览 |
 | `GET` | `/astrbot_plugin_palette/background-thumbnail` | 获取图库压缩缩略图 |
 | `GET` | `/astrbot_plugin_palette/background-cover?filename=...` | 读取鉴权静态封面 |
@@ -297,7 +317,8 @@ astrbot_palette_dark_theme_bootstrapped=1
 ## 安全边界
 
 - 不修改 AstrBot 源码。
-- 只写入 AstrBot 当前使用的 WebUI 入口和插件自己的数据目录；内置 WebUI 不可写时才会准备 `data/dist` 降级副本。
+- 普通部署只写入 AstrBot 当前使用的 WebUI 入口和插件自己的数据目录；内置 WebUI 不可写时才会准备 `data/dist` 降级副本。打包 Desktop 完全不操作 WebUI 入口。
+- Desktop 扩展脚本在主页面运行，拥有与登录 WebUI 相同的权限；设置页只发起授权请求，不读取或接收令牌。只应在原生确认框中授权信任的插件。
 - 高级 CSS 会拦截 `@import` 和外链 `url()`，避免引入外部资源。
 - 背景文件名会被限制为插件生成的本地文件名，避免路径穿越。
 - 原素材按真实文件头与格式校验，插件不限制文件体积；生成的封面仍校验格式、尺寸和体积。
@@ -386,6 +407,8 @@ git diff --check
 `0.4.20` 核对 AstrBot `4.28.2` 的全部版本差异：上游仅调整数据库时间字段存储、消息历史清理的时区及版本信息，没有修改 Dashboard 页面、目录解析器或插件接口；调色盘无需改动功能代码。使用 `4.28.2` 的数据库模型验证 Token 明细统计正常，浏览器页面仍沿用 `4.28.1` 的验收结果。升级核心时请确保 Dashboard 构建资源版本匹配：桌面托管模式会拒绝旧版本的 `data/dist`。
 
 `0.5.1` 新增视频、动图静态兜底、自包含 SVG、动态开关、持久化封面与独立素材预览，以及 Wallpaper Engine 原视频/静态图片的本地目录导入。保留旧图库、轮换、主题色、Dashboard 路径解析和外框样式；不提高 AstrBot 兼容下限，新媒体功能完整浏览器与旧版本运行验收待后续安排。
+
+`0.5.9` 适配 Desktop 逐个授权的插件界面扩展：打包桌面版停止一切 WebUI 入口操作，改由授权后的 Desktop 加载同一套调色盘脚本；普通部署和开发态注入逻辑不变，并补充旧版已改写入口时的手动恢复说明。
 
 后续版本会继续补齐更多页面的透明化细节，并探索更完整的主题色板推导。
 

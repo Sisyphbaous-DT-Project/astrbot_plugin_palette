@@ -46,6 +46,10 @@ def _error_response(message, *, status_code=400, data=None, headers=None):
     }
 
 
+def _stream_response(body, *, content_type=None, headers=None):
+    return {"body": body, "content_type": content_type, "headers": headers}
+
+
 def _build_stub_modules() -> dict[str, types.ModuleType]:
     modules = {name: types.ModuleType(name) for name in _STUBBED_MODULES}
 
@@ -69,7 +73,7 @@ def _build_stub_modules() -> dict[str, types.ModuleType]:
     web.json_response = _json_response
     web.error_response = _error_response
     web.file_response = lambda *args, **kwargs: None
-    web.stream_response = lambda *args, **kwargs: None
+    web.stream_response = _stream_response
     web.request = None
 
     paths = modules["astrbot.core.utils.astrbot_path"]
@@ -136,10 +140,15 @@ class PalettePluginTestCase(unittest.TestCase):
         self.background_dir = root / "plugins" / "astrbot_plugin_palette" / "backgrounds"
         self.background_dir.mkdir(parents=True, exist_ok=True)
 
-    def _make_plugin(self, config: dict, files: tuple[str, ...] = ()):
+    def _make_plugin(
+        self, config: dict, files: tuple[str, ...] = (), context=None
+    ):
         for filename in files:
             (self.background_dir / filename).write_bytes(b"\xff\xd8\xff")
-        context = types.SimpleNamespace(register_web_api=lambda *args, **kwargs: None)
+        if context is None:
+            context = types.SimpleNamespace(
+                register_web_api=lambda *args, **kwargs: None
+            )
         with (
             mock.patch.object(main, "ensure_dashboard_injection", lambda paths: {}),
             mock.patch.object(
@@ -407,6 +416,71 @@ class MobileSidebarGlassConfigTest(PalettePluginTestCase):
         self.assertEqual(normalized["stats_card_blur"], 7)
         self.assertEqual(normalized["mobile_sidebar_glass"], 0)
         self.assertIn("background_images", normalized)
+
+
+class DesktopUiExtensionApiTest(PalettePluginTestCase):
+    def test_route_returns_shared_bootstrap_as_uncached_javascript(self) -> None:
+        registrations = []
+        context = types.SimpleNamespace(
+            register_web_api=lambda path, handler, methods, description: registrations.append(
+                (path, handler, methods, description)
+            )
+        )
+        plugin = self._make_plugin({}, context=context)
+        route = next(
+            item
+            for item in registrations
+            if item[0] == f"{main.ROUTE_PREFIX}/desktop-ui-extension.js"
+        )
+        self.assertEqual(route[1], plugin.get_desktop_ui_extension)
+        self.assertEqual(route[2], ["GET"])
+
+        response = asyncio.run(plugin.get_desktop_ui_extension())
+        self.assertEqual(
+            response["body"], [main.build_desktop_ui_extension_script()]
+        )
+        self.assertEqual(
+            response["content_type"], "application/javascript; charset=utf-8"
+        )
+        self.assertEqual(response["headers"], {"Cache-Control": "no-store"})
+
+    def test_status_reports_desktop_capabilities_without_packaged_writes(self) -> None:
+        plugin = self._make_plugin({})
+        cases = (
+            ({}, False, False),
+            ({"ASTRBOT_DESKTOP_CLIENT": "1"}, True, False),
+            (
+                {
+                    "ASTRBOT_DESKTOP_CLIENT": "1",
+                    "ASTRBOT_DESKTOP_PLUGIN_UI_EXTENSIONS": "1",
+                },
+                True,
+                True,
+            ),
+            ({"ASTRBOT_DESKTOP_PLUGIN_UI_EXTENSIONS": "1"}, False, True),
+            ({"ASTRBOT_DESKTOP_MANAGED": "1"}, False, False),
+        )
+        root = Path(self._tmp.name)
+
+        def snapshot():
+            return {
+                str(path.relative_to(root)): path.read_bytes()
+                for path in root.rglob("*")
+                if path.is_file()
+            }
+
+        for environment, client, ui_extensions in cases:
+            with self.subTest(environment=environment):
+                before = snapshot()
+                with mock.patch.dict("os.environ", environment, clear=True):
+                    response = asyncio.run(plugin.get_status())
+                self.assertEqual(
+                    response["body"]["desktop"],
+                    {"client": client, "ui_extensions": ui_extensions},
+                )
+                if client:
+                    self.assertFalse(response["body"]["injection"]["supported"])
+                    self.assertEqual(snapshot(), before)
 
 
 if __name__ == "__main__":

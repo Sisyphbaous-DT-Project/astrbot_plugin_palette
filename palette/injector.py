@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import shutil
 import sys
@@ -97,6 +98,8 @@ class DashboardTarget:
 def ensure_dashboard_injection(paths: PalettePaths) -> InjectionStatus:
     """向 AstrBot 运行时 Dashboard 入口注入调色盘启动脚本。"""
 
+    if os.environ.get("ASTRBOT_DESKTOP_CLIENT") == "1":
+        return _unsupported_packaged_desktop_status()
     target = _resolve_dashboard_target(paths, allow_copy_fallback=True)
     if target is None:
         return _unsupported_no_target_status()
@@ -179,6 +182,19 @@ def ensure_dashboard_injection(paths: PalettePaths) -> InjectionStatus:
     return _inspect_target(target)
 
 
+def _unsupported_packaged_desktop_status() -> InjectionStatus:
+    if os.environ.get("ASTRBOT_DESKTOP_PLUGIN_UI_EXTENSIONS") == "1":
+        message = "桌面版通过插件界面扩展加载调色盘，请在设置页授权。"
+    else:
+        message = "当前桌面版不支持插件界面扩展，需要使用支持该功能的桌面版，或改用源码、Docker 部署。"
+    return InjectionStatus(
+        supported=False,
+        patched=False,
+        index_exists=False,
+        message=message,
+    )
+
+
 def inspect_injection(paths: PalettePaths) -> InjectionStatus:
     """检测 WebUI 运行时补丁状态。
 
@@ -187,6 +203,8 @@ def inspect_injection(paths: PalettePaths) -> InjectionStatus:
     已准备回退，不会触发任何复制或写入。
     """
 
+    if os.environ.get("ASTRBOT_DESKTOP_CLIENT") == "1":
+        return _unsupported_packaged_desktop_status()
     target = _resolve_dashboard_target(paths, allow_copy_fallback=True)
     if target is None:
         return _unsupported_no_target_status()
@@ -642,11 +660,21 @@ def _inject_prepared_fallback(
     return _inspect_target(target)
 
 
+def _build_bootstrap_urls() -> tuple[str, str, str, str]:
+    prefix = f"/api/v1/plugins/extensions/{PLUGIN_NAME}"
+    return (
+        f"{prefix}/config",
+        f"{prefix}/backgrounds/random-select",
+        f"{prefix}/theme.css?v={VERSION}-{THEME_CACHE_VERSION}",
+        f"{prefix}/token-stats",
+    )
+
+
+def build_desktop_ui_extension_script() -> str:
+    return _build_bootstrap_script(*_build_bootstrap_urls())
+
+
 def _build_injection_block() -> str:
-    config_url = f"/api/v1/plugins/extensions/{PLUGIN_NAME}/config"
-    random_select_url = f"/api/v1/plugins/extensions/{PLUGIN_NAME}/backgrounds/random-select"
-    theme_url = f"/api/v1/plugins/extensions/{PLUGIN_NAME}/theme.css?v={VERSION}-{THEME_CACHE_VERSION}"
-    token_stats_url = f"/api/v1/plugins/extensions/{PLUGIN_NAME}/token-stats"
     return "\n".join(
         [
             "  " + INJECTION_START_MARKER,
@@ -654,12 +682,7 @@ def _build_injection_block() -> str:
                 '  <script id="astrbot-palette-bootstrap" '
                 f'data-version="{VERSION}">'
             ),
-            _build_bootstrap_script(
-                config_url,
-                random_select_url,
-                theme_url,
-                token_stats_url,
-            ),
+            build_desktop_ui_extension_script(),
             "  </script>",
             "  " + INJECTION_END_MARKER,
         ]
@@ -676,7 +699,14 @@ def _build_bootstrap_script(
     random_select_url_json = json.dumps(random_select_url)
     theme_url_json = json.dumps(theme_url)
     token_stats_url_json = json.dumps(token_stats_url)
-    return _MEDIA_CACHE_JS + _MEDIA_RUNTIME_JS + f"""
+    guard = """(function () {
+    "use strict";
+    if (window.__astrbotPaletteBootstrapped) {
+        return;
+    }
+    window.__astrbotPaletteBootstrapped = true;
+"""
+    return guard + _MEDIA_CACHE_JS + _MEDIA_RUNTIME_JS + f"""
 (function () {{
     "use strict";
 
@@ -3046,4 +3076,5 @@ def _build_bootstrap_script(
     setupPaletteSync();
     bootstrapRecommendedDarkTheme();
     refreshPalette({{ allowInitialRandom: true }});
-  }})();"""
+  }})();
+}})();"""

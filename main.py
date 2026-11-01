@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import os
 import random
 from contextlib import suppress
 from collections import defaultdict
@@ -45,7 +46,10 @@ from .palette.media import (
     save_cover_image,
 )
 from .palette.colors import extract_theme_colors, normalize_hex_color
-from .palette.injector import ensure_dashboard_injection
+from .palette.injector import (
+    build_desktop_ui_extension_script,
+    ensure_dashboard_injection,
+)
 from .palette.paths import PalettePaths
 from .palette.theme import build_theme_css
 from .palette.thumbnails import (
@@ -116,6 +120,12 @@ class PalettePlugin(Star):
             self.get_theme_css,
             ["GET"],
             "获取 AstrBot 调色盘主题 CSS",
+        )
+        context.register_web_api(
+            f"{ROUTE_PREFIX}/desktop-ui-extension.js",
+            self.get_desktop_ui_extension,
+            ["GET"],
+            "获取 AstrBot 调色盘桌面版界面扩展脚本",
         )
         context.register_web_api(
             f"{ROUTE_PREFIX}/config",
@@ -238,9 +248,23 @@ class PalettePlugin(Star):
                 },
                 "paths": self.paths.to_public_dict(),
                 "injection": injection_status.to_dict(),
+                "desktop": {
+                    "client": os.environ.get("ASTRBOT_DESKTOP_CLIENT") == "1",
+                    "ui_extensions": os.environ.get(
+                        "ASTRBOT_DESKTOP_PLUGIN_UI_EXTENSIONS"
+                    )
+                    == "1",
+                },
                 # 前端据此决定是否走分块上传；旧后端无此字段时仅小包回退旧接口。
                 "upload_protocol": self._uploads.capability(),
             }
+        )
+
+    async def get_desktop_ui_extension(self):
+        return stream_response(
+            [build_desktop_ui_extension_script()],
+            content_type="application/javascript; charset=utf-8",
+            headers={"Cache-Control": "no-store"},
         )
 
     async def get_config(self):

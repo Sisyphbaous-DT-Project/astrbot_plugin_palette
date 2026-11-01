@@ -83,6 +83,14 @@ class BootstrapScriptSyntaxTest(unittest.TestCase):
         )
 
 
+class BootstrapReentrancyStructureTest(unittest.TestCase):
+    def test_guard_covers_media_modules_and_main_iife(self) -> None:
+        guard = "window.__astrbotPaletteBootstrapped = true;"
+        self.assertIn("if (window.__astrbotPaletteBootstrapped)", _SCRIPT)
+        self.assertLess(_SCRIPT.index(guard), _SCRIPT.index("var api = factory();"))
+        self.assertTrue(_SCRIPT.rstrip().endswith("})();"))
+
+
 class BootstrapRotationStructureTest(unittest.TestCase):
     """定时轮换机制的静态结构断言。"""
 
