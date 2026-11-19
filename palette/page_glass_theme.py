@@ -10,6 +10,9 @@ from __future__ import annotations
 from .glass import NOT_COLORED, backdrop_filter_lines, build_glass_tokens
 
 _MAIN = "html.astrbot-palette-active #app .v-main"
+# 这些插件页把卡片之外的空白留给了壁纸，需要壁纸保持清晰（不要外壳模糊）。
+# 匹配的是 iframe src 里的插件目录名。
+BLUR_EXEMPT_PLUGINS = ("astrbot_plugin_memewiki", "meme_manager")
 # 当前选中的 MCP 条目由 theme.py 单独恢复选中底色与边框（不带模糊与阴影），这里不接管。
 _NOT_SELECTED = ":not(.mcp-server-list-item--selected)"
 
@@ -116,6 +119,36 @@ def build_page_glass_css(stats_card_blur: int) -> str:
 
     return "\n".join(
         [
+            # 插件页面（iframe）是一个独立文档，内部样式的 backdrop-filter
+            # 拿不到父页面壁纸，模糊只能加在外壳上：外壳本身透明，调色盘适配
+            # 过的插件页把底色染透明后就是一块磨砂玻璃；没适配的页面不透明，
+            # 看不出差别。
+            _join(
+                [
+                    f"{_MAIN} .plugin-view-frame",
+                    f"{_MAIN} .plugin-page-frame",
+                ]
+            )
+            + " {",
+            "  background: transparent !important;",
+            *backdrop_filter_lines(blur),
+            "}",
+            "",
+            # 这两个插件页自己保留了「壁纸可见的空白区」，外壳模糊会把整片壁纸
+            # 一起糊掉；它们要的是透明而不是磨砂，所以按 src 里的插件名豁免。
+            # （iframe 的 src 形如 /api/v1/plugins/<插件名>/views/<页面>/...）
+            _join(
+                [
+                    f'{_MAIN} iframe.{frame}[src*="{plugin}"]'
+                    for plugin in BLUR_EXEMPT_PLUGINS
+                    for frame in ("plugin-view-frame", "plugin-page-frame")
+                ]
+            )
+            + " {",
+            "  backdrop-filter: none !important;",
+            "  -webkit-backdrop-filter: none !important;",
+            "}",
+            "",
             _join(wrappers) + " {",
             "  background: transparent !important;",
             "  background-color: transparent !important;",
@@ -131,11 +164,16 @@ def build_page_glass_css(stats_card_blur: int) -> str:
             "}",
             "",
             # 外层玻璃载体：这一组才执行真实的背景模糊。
+            # text-shadow 的复位是性能关键：文字增强的阴影从中层容器继承到卡片里
+            # 每一段文本，几百个文本 run 带着阴影再叠在 backdrop-filter 上，滚动时
+            # 浏览器无法复用绘制结果，实测帧率会掉到一半。卡片自己有半透明底色，
+            # 不需要阴影托底，重置后由卡内文本继承 none，卡片外的裸标题仍保留阴影。
             _join([*hover_cards, *static_cards, *plain_cards]) + " {",
             f"  background: {tokens.surface} !important;",
             f"  background-color: {tokens.surface} !important;",
             f"  border-color: {tokens.border} !important;",
             f"  box-shadow: {tokens.shadow} !important;",
+            "  text-shadow: none !important;",
             *backdrop_filter_lines(blur),
             "}",
             "",

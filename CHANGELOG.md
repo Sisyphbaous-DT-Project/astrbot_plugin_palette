@@ -1,5 +1,57 @@
 # 更新日志
 
+## 未发布
+
+### 性能优化：视频壁纸与滚动绘制
+
+- **视频壁纸下整组关闭背景模糊**（主要卡顿来源）。视频每播一帧，页面上每个 `backdrop-filter` 元素都要重新采样、重新模糊一次，滚动时持续重算；动态背景本来也看不出"糊"与"不糊"的区别。注入脚本现在按当前背景媒体类型给 `<html>` 切 `astrbot-palette-video-bg`，模糊值统一走 `--astrbot-palette-glass-filter` / `--astrbot-palette-sidebar-filter`，视频时改成 `none`，卡片保留半透明底色与描边。实测（无头 Chrome 软件渲染，逐帧对比）：「模型提供商」页 45 → 59 FPS，「人格设定」页 31 → 60 FPS。
+- `backdrop_filter_lines` 每条规则同时输出字面值和 `var(…, 字面值)` 两层声明：变量缺失时行为与改动前完全一致（测试里断言的 `blur(Npx) saturate(1.08)` 仍然成立），变量存在时以变量为准。之所以不直接改成 `var()`，是因为带 `:not` 六连链的规则特异性高达 (1,10,1)，逐条写覆盖规则压不住。
+- **玻璃容器内的文字不再带阴影**：文字增强的 `text-shadow` 原本从 `.v-main` 一路继承进卡片里的每一段文本，几百个带阴影的文本 run 叠在 `backdrop-filter` 上时，滚动无法复用绘制结果。现在 `.v-main` 下的 `.v-card` / `.v-sheet` / `.v-list` / `.v-list-item` / `.v-data-table` / `.v-table` / `.v-window` / `.v-tabs` / `.v-expansion-panel` 统一复位 `text-shadow: none`，由子元素继承；侧栏、顶栏和直接压在壁纸上的裸标题仍保留阴影。插件页（记忆面板、自主学习）里同类面板也做了同样的复位。
+- **保存设置不再卡住事件循环**：`_sync_plugin_pages` 增加「启用状态 / 主色 / 辅色」签名缓存，签名没变直接返回；`ensure_plugin_page_injection` 用文件 `(mtime, size)` 缓存跳过没被动过的页面（十几个 HTML 加起来几百 KB）。保存设置时的页面同步改走 `asyncio.to_thread`，不再占着事件循环。
+- 表情包管理器的四个子页面共用同一份样式，生成一次复用四次，不再重复拼接。
+- 生成的 `theme.css` 去掉 CSS 注释与连续空行。
+
+### 插件页面适配：LivingMemory 记忆面板
+
+- 新增 `palette/plugin_pages.py`：向已适配插件页面的 HTML 写入带标记的样式块（`astrbot_plugin_palette:plugin-page:start/end`），幂等、可撤销，写入前在 `dashboard_backups/` 留原始文件备份。插件启动与保存设置时补齐，关闭调色盘时整块撤掉。
+- 记忆面板由 `--bg-app` / `--bg-card` / `--bg-input` 等一套 CSS 变量驱动，样式块只覆盖这些变量：页面底色交给壁纸，侧栏、卡片、表头、输入框改成半透明玻璃色，原来的 48px 网格纹理换成一层压暗，深色/浅色各一套数值。遮罩、弹窗、3D 图谱侧栏一并跟随。
+- `build_page_glass_css` 给 `.plugin-view-frame` / `.plugin-page-frame` 增加跟随 `stats_card_blur` 的背景模糊：iframe 内部拿不到父页面壁纸，模糊只能加在外壳上，页面把底色染透明后就是磨砂玻璃。未适配的插件页面本身不透明，看不到差别。
+- `THEME_CACHE_VERSION` 提升为 `20261119-plugin-page`，避免浏览器继续用旧 `theme.css`。
+- 圆角：覆盖面板的 `--radius-*` / `--theme-radius` 为调色盘档位（面板 18、卡片 14、按钮输入 10、小标签 8、对话框 20），并逐类点名 editorial 风格里写死的 0~4px 圆角；胶囊、圆点类保持 999px / 50%，避免被压成方块。
+- 主题色：写入时把 `theme_primary` / `theme_secondary` 作为快照写进 CSS（非法值回退默认色），映射到面板的 `--accent` / `--signal` / `--border-focus` 等；深色下按钮用深字，浅色下把主色压深保证白字对比。另外在注入脚本里加了一段 postMessage 桥：插件页向 Dashboard 要当前主/辅色，`ensureThemeColorRgbStyle` / `removeThemeColorStyle` 每次变色也会主动推给所有插件页 iframe，所以自动取色、手动换色都实时生效，不用重开页面。
+- 新增 `tests/test_plugin_pages.py`（11 项）：写入位置与 BOM/CRLF 保留、重复写入不叠加、撤销后逐字节还原、缺失 `</head>` 拒绝写入、关闭插件时还原、页面不存在时跳过、主题色与圆角写入、颜色非法回退、桥接脚本存在。
+
+### 插件页面适配：梗百科「自定义黑话」
+
+- 插件页面目录支持 `views/<页面名>/index.html`（AstrBot 的 `views` 优先、`pages` 兼容），`PluginPageTarget` 增加 `rel_path`，两个页面路径不再靠猜。
+- 适配梗百科 `views/slang/index.html`：这一页没有圆角变量，暗色只靠 `prefers-color-scheme`（跟的是操作系统而不是面板主题），所以改为以 `<html data-theme>` 为准，深浅两套变量都显式写死；面板、输入框、按钮分别给 18 / 10 / 8 圆角，输入框加跟随主色的焦点环，滚动条换成调色盘的细圆角样式。
+- 底色交给壁纸：`html`/`body` 透明，不铺任何整页压暗（早期版本压暗只包住内容块，看起来仍是一块灰板），卡片之外的空白完全透明、直接露出壁纸；面板为半透明玻璃（深色 0.34、浅色 0.52），输入框单独给一层浅底，标题等裸文本用文字阴影保证可读。深色下主按钮改深字，避免浅色强调色配白字看不清。
+- 新增 `tests/test_plugin_pages.py` 的 `TargetPathTests` / `MemewikiCssTests`（5 项）：两种页面目录、路径拼接、`data-theme` 而非 `prefers-color-scheme`、玻璃底色与圆角、深色主按钮深字。
+
+### 插件页面适配：Self Learning「自主学习」
+
+- 适配 `astrbot_plugin_self_learning` 的 `pages/dashboard/index.html`。这一页自带 Ark / endfield 设计（方角、信号黄、硬偏移阴影），但表面颜色全部走 `--surface` / `--surface-solid` / `--surface-alt` / `--border` / `--border-strong` 变量，所以覆盖变量即可整体玻璃化：深色 0.42~0.52、浅色 0.5~0.6，页面底色 `--bg` 交给壁纸，另铺一层 0.34（浅色 0.52）压暗保证正文可读。
+- 信号黄 `--signal` / `--ark-signal` 换成调色盘主色，`--signal-soft` 用 22% 主色；图表主序列 `--chart-1` / `--chart-5` 一起跟随，柱状图不再一片黄。语义色（状态绿、危险红）保持原样。
+- 顶栏是「反向坞」：深色主题下白底深字、浅色主题下黑底浅字，覆盖背景时按主题分别给 0.72 透明度，别搞反。
+- 方角收成调色盘档位（面板 14、按钮/输入/分段控制 10、徽标 8、进度条 999），硬偏移阴影 `0.4rem 0.4rem 0` 换成柔和投影；`.segment-control` 加 `overflow: hidden` 裁掉首尾方角。侧栏 14 个导航项保持原来的带分隔线列表不收圆角——收了分隔线两端会翘成弧线，加间隙又会把最后一项顶出可视区。
+- 新增 `SelfLearningCssTests`（4 项）：整页透明 + 压暗、信号色与图表色跟随主题、玻璃表面与圆角档位、`data-theme` 判据。
+
+### 插件页面适配：表情包管理器
+
+- 适配 `meme_manager` 的四个子页面（`pages/app/{a_manage,catalog,semantic,settings}/index.html`）：它由一个外壳页 + 四个独立 HTML 组成，页面间是站内跳转，所以四份都要写。`pages/app/index.html` 只是跳转壳，不处理。
+- 这一页的 `shared/ui.css` 已经是完整 token 体系，只覆盖颜色：`--surface` / `--surface-elevated` / `--surface-inset` / `--surface-hover` / `--surface-active` / `--surface-muted` / `--surface-glass(-strong)` 换成半透明（深色 0.38~0.66、浅色 0.45~0.72），`--border*` 换成 rgba。
+- 品牌绿 `--primary` 整套换成调色盘主色：`--primary-hover`、`--primary-soft(-hover/-strong)`、`--primary-border(-strong)`、`--link`、`--accent`、`--focus-soft`、`--scrollbar` 一起用 `color-mix` 派生；深色下 `--on-primary` 改深字（强调色偏亮），浅色下主色压深保证白字对比。
+- `body` 原来的 `--ambient-sage` / `--ambient-warm` 两团氛围光斑用 `background-image: none` 去掉，页面不再整页铺压暗：卡片之外的空白完全透明、直接露出壁纸，可读性交给半透明面板与文字阴影。
+- 圆角档位（8/12/16/20/999）本来就和调色盘一致，不做覆盖。
+- 新增 `MemeManagerCssTests`（4 项）：透明底色且去掉氛围渐变、空白不铺压暗、表面玻璃化、品牌 token 跟随主题色、不重复改圆角；`TargetPathTests` 补四个子页面路径。
+
+### 壁纸保持清晰：「自定义黑话」与「表情包管理器」
+
+- 这两页把卡片之外的区域留给壁纸，所以不再叠 iframe 外壳的背景模糊：`page_glass_theme.py` 增加 `BLUR_EXEMPT_PLUGINS`，按 iframe `src` 里的插件名（`astrbot_plugin_memewiki` / `meme_manager`）把 `backdrop-filter` 复位成 `none`，其它插件页照旧跟随毛玻璃强度。
+- 修掉一处隐藏问题：插件页是独立文档，页面自己声明的 `color-scheme: dark` 会让 Chrome 把 iframe 画布刷成不透明黑。以前外壳有模糊，壁纸是被「滤」进来的，所以看不出来；模糊一去就整页变黑。两页的适配样式统一加 `html { color-scheme: normal !important; }`，画布才真正透明（表单控件外观仍由页面自己的 CSS 决定）。
+- `THEME_CACHE_VERSION` 提升为 `20261119-page-sharp-wallpaper`，避免浏览器继续用旧 `theme.css`。
+- 新增测试：`test_glass_overlay_css.py` 断言外壳默认仍有模糊、这两页的 iframe 被复位为 `none`；`test_plugin_pages.py` 断言两页不再出现压暗伪元素且带 `color-scheme: normal`。
+
 ## 0.5.9
 
 ### AstrBot Desktop 插件界面扩展

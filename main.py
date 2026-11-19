@@ -51,6 +51,7 @@ from .palette.injector import (
     ensure_dashboard_injection,
 )
 from .palette.paths import PalettePaths
+from .palette.plugin_pages import ensure_plugin_page_injection
 from .palette.theme import build_theme_css
 from .palette.thumbnails import (
     delete_background_thumbnails,
@@ -94,7 +95,10 @@ class PalettePlugin(Star):
         self.config: Mapping[str, Any] = config if config is not None else {}
         self._config_lock = asyncio.Lock()
         self.paths = PalettePaths()
+        # 上次同步插件页面时的 (启用, 主色, 辅色)：没变就不用再碰那些 HTML。
+        self._plugin_page_signature: tuple[bool, str, str] | None = None
         self.injection_status = ensure_dashboard_injection(self.paths)
+        self._sync_plugin_pages()
         self._ensure_config_for_existing_background()
         self._uploads = UploadManager(
             self.paths,
@@ -281,6 +285,9 @@ class PalettePlugin(Star):
             config = self._with_theme_colors(config)
             self.injection_status = ensure_dashboard_injection(self.paths)
             self._save_config(config)
+            # 页面文件读写放到线程池：同步做会把 HTTP 响应和整个 Dashboard 的
+            # 其他请求一起卡住。
+            await asyncio.to_thread(self._sync_plugin_pages)
         except ValueError as exc:
             return error_response(str(exc))
 
@@ -973,6 +980,29 @@ class PalettePlugin(Star):
                 fallback_background_image
             ),
         }
+
+    def _sync_plugin_pages(self) -> None:
+        """让已适配的第三方插件页面跟随主题，关闭插件时还原。
+
+        只在「启用状态 / 主色 / 辅色」变化时才动文件：这几个页面块加起来几百 KB，
+        每次保存设置都全量读一遍再比对，会把事件循环卡住一瞬。
+        """
+
+        signature = (
+            self._config_bool("enabled", True),
+            self._config_str("theme_primary", ""),
+            self._config_str("theme_secondary", ""),
+        )
+        if signature == self._plugin_page_signature:
+            return
+        for note in ensure_plugin_page_injection(
+            signature[0],
+            self.paths.patch_backup_dir,
+            signature[1],
+            signature[2],
+        ):
+            _logger.info(f"[{PLUGIN_NAME}] {note}")
+        self._plugin_page_signature = signature
 
     def _config_bool(self, key: str, default: bool) -> bool:
         value = self.config.get(key, default)

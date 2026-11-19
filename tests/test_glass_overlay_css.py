@@ -146,6 +146,18 @@ class PageGlassTest(unittest.TestCase):
                 ):
                     self.assertIn(":not(.bg-primary)", selector, selector)
 
+    def test_iframe_shell_blur_is_exempted_for_sharp_pages(self) -> None:
+        # 插件页 iframe 外壳默认带模糊；把自己留出壁纸空白的两页按 src 豁免，
+        # 否则整片壁纸会被糊成一块磨砂。
+        css = build_page_glass_css(14)
+        shells = _bodies(css, "#app .v-main .plugin-view-frame")
+        self.assertTrue(any("blur(14px)" in body for body in shells), shells)
+        for plugin in ("astrbot_plugin_memewiki", "meme_manager"):
+            bodies = _bodies(css, f'iframe.plugin-view-frame[src*="{plugin}"]')
+            self.assertTrue(bodies, f"缺少 iframe 去模糊规则: {plugin}")
+            for body in bodies:
+                self.assertIn("backdrop-filter: none !important;", body)
+
     def test_selected_mcp_item_is_not_taken_over(self) -> None:
         css = build_page_glass_css(14)
         self.assertNotIn(
@@ -524,6 +536,35 @@ class OverlayGlassTest(unittest.TestCase):
     def test_no_zero_pixel_blur_anywhere(self) -> None:
         for blur in (0, 14):
             self.assertNotIn("blur(0px)", _css(blur=blur))
+
+
+class VideoBackgroundGlassTest(unittest.TestCase):
+    """视频壁纸下整组关掉背景模糊，静态图保持原样。"""
+
+    def test_filter_variables_are_declared(self) -> None:
+        css = build_theme_css({"stats_card_blur": 14, "mobile_sidebar_glass": 18})
+        self.assertIn("--astrbot-palette-glass-filter: blur(14px) saturate(1.08)", css)
+        self.assertIn("--astrbot-palette-sidebar-filter: blur(18px) saturate(1.08)", css)
+
+    def test_blur_declarations_resolve_through_variable(self) -> None:
+        # 字面值必须仍然保留：变量没定义时（或用户用高级 CSS 覆盖前）行为不变。
+        css = build_theme_css({"stats_card_blur": 14})
+        self.assertIn(
+            "backdrop-filter: var(--astrbot-palette-glass-filter, "
+            "blur(14px) saturate(1.08)) !important;",
+            css,
+        )
+
+    def test_video_marker_clears_both_variables(self) -> None:
+        css = build_theme_css({"stats_card_blur": 14, "mobile_sidebar_glass": 18})
+        body = "\n".join(_bodies(css, "astrbot-palette-video-bg"))
+        self.assertIn("--astrbot-palette-glass-filter: none", body)
+        self.assertIn("--astrbot-palette-sidebar-filter: none", body)
+
+    def test_zero_blur_keeps_literal_none(self) -> None:
+        css = _css(blur=0)
+        self.assertNotIn("var(--astrbot-palette-glass-filter", css)
+        self.assertNotIn("blur(0px)", css)
 
 
 if __name__ == "__main__":

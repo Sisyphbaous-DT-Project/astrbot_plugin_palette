@@ -27,16 +27,37 @@ TINT_BORDER = f"rgba(var(--v-theme-on-surface), calc({_OPACITY} * 0.18))"
 TINT_DIVIDER = f"rgba(var(--v-theme-on-surface), calc({_OPACITY} * 0.14))"
 
 
-def backdrop_filter_lines(blur: int) -> list[str]:
-    """生成背景模糊声明；为 0 时必须输出 none，blur(0px) 仍会触发滤镜合成。"""
+# 模糊声明统一走 CSS 变量：视频壁纸下只要把这个变量改成 none，就能让全站
+# 的 backdrop-filter 整组让位，不必逐条规则覆盖（!important 同权重时比的是
+# 选择器特异度，逐条覆盖很容易压不住）。
+GLASS_FILTER_VAR = "--astrbot-palette-glass-filter"
+SIDEBAR_FILTER_VAR = "--astrbot-palette-sidebar-filter"
+
+
+def glass_filter_token(blur: int) -> str:
+    """变量里存的模糊值；0 表示不启用模糊。"""
+    return f"blur({max(0, min(40, blur))}px) saturate(1.08)" if blur > 0 else "none"
+
+
+def backdrop_filter_lines(blur: int, variable: str = GLASS_FILTER_VAR) -> list[str]:
+    """生成背景模糊声明；为 0 时必须输出 none，blur(0px) 仍会触发滤镜合成。
+
+    每条规则先写字面值、再写一层 `var(..., 字面值)`：后者覆盖前者（同权重时
+    后者胜），变量正常时行为与写死一致；视频壁纸下把变量改成 none 就能让全站
+    的模糊一起让位，不需要逐条选择器去比特异度（带 :not 链的规则很难压过）。
+    """
+
     if blur <= 0:
         return [
             "  backdrop-filter: none !important;",
             "  -webkit-backdrop-filter: none !important;",
         ]
+    literal = f"blur({blur}px) saturate(1.08)"
     return [
-        f"  backdrop-filter: blur({blur}px) saturate(1.08) !important;",
-        f"  -webkit-backdrop-filter: blur({blur}px) saturate(1.08) !important;",
+        f"  backdrop-filter: {literal} !important;",
+        f"  -webkit-backdrop-filter: {literal} !important;",
+        f"  backdrop-filter: var({variable}, {literal}) !important;",
+        f"  -webkit-backdrop-filter: var({variable}, {literal}) !important;",
     ]
 
 

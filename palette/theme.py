@@ -7,7 +7,8 @@ from .attached_dialog_theme import build_attached_dialog_css
 from .chat_theme import build_chat_theme_css
 from .console_theme import build_console_css
 from .constants import VERSION
-from .glass import NOT_COLORED, build_glass_tokens
+from .glass import NOT_COLORED, build_glass_tokens, glass_filter_token
+from .glass import GLASS_FILTER_VAR, SIDEBAR_FILTER_VAR
 from .glass import backdrop_filter_lines as _backdrop_filter_lines
 from .overlay_theme import build_overlay_css
 from .page_glass_theme import build_page_glass_css
@@ -16,9 +17,31 @@ from .trace_theme import build_trace_css
 
 _ADVANCED_CSS_BLOCKED_AT_RULE = re.compile(r"@import\b", re.IGNORECASE)
 _EXTERNAL_URL = re.compile(r"url\(\s*(['\"]?)(https?:|//)", re.IGNORECASE)
+# 生成的样式里注释只写给维护者看，运行时没有语义；整段去掉能少三成体积，
+# 浏览器解析与样式表驻留都跟着降。
+_CSS_COMMENT = re.compile(r"/\*.*?\*/", re.DOTALL)
 
 
-def build_theme_css(config: dict[str, Any]) -> str:
+def _compact_css(css: str) -> str:
+    """去掉注释与行尾空白，合并连续空行。保留换行，出错时还能看懂。"""
+
+    if not css:
+        return css
+    lines = (line.rstrip() for line in _CSS_COMMENT.sub("", css).splitlines())
+    out: list[str] = []
+    for line in lines:
+        if not line:
+            if out and out[-1] != "":
+                out.append("")
+            continue
+        out.append(line)
+    while out and out[-1] == "":
+        out.pop()
+    return "\n".join(out) + "\n" if out else ""
+
+
+
+def _build_theme_css_raw(config: dict[str, Any]) -> str:
     """生成运行时 Dashboard 主题 CSS。"""
 
     enabled = "1" if config.get("enabled") is True else "0"
@@ -90,6 +113,8 @@ def build_theme_css(config: dict[str, Any]) -> str:
             f"  --astrbot-palette-background-dim: {background_dim};",
             f"  --astrbot-palette-background-inset: {background_inset}px;",
             f"  --astrbot-palette-surface-opacity: {surface_opacity};",
+            f"  {GLASS_FILTER_VAR}: {glass_filter_token(stats_card_blur)};",
+            f"  {SIDEBAR_FILTER_VAR}: {glass_filter_token(mobile_sidebar_glass)};",
             f"  --astrbot-palette-text-enhancement-strength: {text_enhancement_strength};",
             f"  --astrbot-palette-background-grayscale: {background_grayscale};",
             f"  --astrbot-palette-background-brightness: {background_brightness};",
@@ -242,8 +267,36 @@ def build_theme_css(config: dict[str, Any]) -> str:
             "",
             _readability_css(text_effect, icon_effect),
             "",
+            _video_background_css(),
+            "",
             sanitize_advanced_css(config.get("advanced_css")),
             "",
+        ]
+    )
+
+
+def build_theme_css(config: dict[str, Any]) -> str:
+    """生成运行时 Dashboard 主题 CSS（已压缩注释与空行）。"""
+
+    return _compact_css(_build_theme_css_raw(config))
+
+
+def _video_background_css() -> str:
+    """视频壁纸下关掉全部背景模糊。
+
+    视频每一帧都在变，页面上每个 backdrop-filter 元素都得跟着重新采样、
+    重新模糊一遍，属于持续的绘制开销；动态背景本来就看不出"糊"与"不糊"
+    的区别，所以直接把模糊变量改成 none，全站规则跟着一起让位。
+
+    标记由注入脚本按当前背景媒体类型切换（`.astrbot-palette-video-bg`）。
+    """
+
+    return "\n".join(
+        [
+            "html.astrbot-palette-active.astrbot-palette-video-bg {",
+            f"  {GLASS_FILTER_VAR}: none;",
+            f"  {SIDEBAR_FILTER_VAR}: none;",
+            "}",
         ]
     )
 
@@ -623,7 +676,7 @@ def _mobile_sidebar_glass_css(mobile_sidebar_glass: int) -> str:
         "html.astrbot-palette-active #app .v-navigation-drawer.v-navigation-drawer--temporary {",
         f"  background: {surface} !important;",
         f"  background-color: {surface} !important;",
-        *_backdrop_filter_lines(blur),
+        *_backdrop_filter_lines(blur, SIDEBAR_FILTER_VAR),
         "}",
     ]
     if glass_enabled:
@@ -690,6 +743,22 @@ def _readability_css(text_effect: str, icon_effect: str) -> str:
             "html.astrbot-palette-active #app .bg-warning,",
             "html.astrbot-palette-active #app .bg-error,",
             "html.astrbot-palette-active #app .bg-info {",
+            "  text-shadow: none !important;",
+            "}",
+            "",
+            # 正文区里的实心容器（卡片、列表、表格、面板）自己提供对比度，不需要
+            # 文字增强的阴影；而阴影会让几百个文本 run 在滚动时无法复用绘制结果，
+            # 与卡片上的 backdrop-filter 叠加后帧率直接腰斩。侧栏与顶栏不在
+            # .v-main 内，压在壁纸上的裸文本仍保留阴影。
+            "html.astrbot-palette-active #app .v-main .v-card,",
+            "html.astrbot-palette-active #app .v-main .v-sheet,",
+            "html.astrbot-palette-active #app .v-main .v-list,",
+            "html.astrbot-palette-active #app .v-main .v-list-item,",
+            "html.astrbot-palette-active #app .v-main .v-data-table,",
+            "html.astrbot-palette-active #app .v-main .v-table,",
+            "html.astrbot-palette-active #app .v-main .v-expansion-panel,",
+            "html.astrbot-palette-active #app .v-main .v-window,",
+            "html.astrbot-palette-active #app .v-main .v-tabs {",
             "  text-shadow: none !important;",
             "}",
             "",
@@ -1027,9 +1096,37 @@ def _page_specific_surface_css() -> str:
     )
 
 
+# ---- 模型提供商页的玻璃深浅（0–1，想要更透就调小，想要更实就调大）----
+# 这一页只让 provider-workbench 当玻璃载体，内层容器一律透明，所以这两个
+# 值直接决定看到的效果，不再被 3 层叠加放大。
+PROVIDER_PANEL_BASE = 0.30  # 「界面底色」为 0 时工作台的底色不透明度
+PROVIDER_PANEL_RANGE = 0.34  # 「界面底色」滑到 1 时再叠加多少
+PROVIDER_ROW_BASE = 0.16  # 供应商列表条目的底色不透明度
+PROVIDER_ROW_RANGE = 0.24
+
+
 def _stats_highlight_css(stats_card_blur: int) -> str:
     blur = max(0, min(40, stats_card_blur))
     glass_enabled = blur > 0
+    # 提供商页：毛玻璃开启时走专用底色，关闭时退回只跟随「界面底色」的普通染色，
+    # 与其它页面保持同一套开关语义。
+    provider_shell = (
+        "rgba(var(--v-theme-surface), "
+        f"calc({PROVIDER_PANEL_BASE} + "
+        f"var(--astrbot-palette-surface-opacity, 0) * {PROVIDER_PANEL_RANGE}))"
+        if glass_enabled
+        else "rgba(var(--v-theme-surface), "
+        "var(--astrbot-palette-surface-opacity, 0))"
+    )
+    provider_row = (
+        "rgba(var(--v-theme-surface), "
+        f"calc({PROVIDER_ROW_BASE} + "
+        f"var(--astrbot-palette-surface-opacity, 0) * {PROVIDER_ROW_RANGE}))"
+        if glass_enabled
+        else "rgba(var(--v-theme-surface), "
+        "var(--astrbot-palette-surface-opacity, 0))"
+    )
+
     surface = (
         "rgba(var(--v-theme-surface), "
         "calc(0.42 + var(--astrbot-palette-surface-opacity, 0) * 0.32))"
@@ -1250,6 +1347,10 @@ def _stats_highlight_css(stats_card_blur: int) -> str:
             "html.astrbot-palette-active #app .v-main .stats-page .range-switch,",
             "html.astrbot-palette-active #app .v-main .stats-page .stat-card {",
             *_backdrop_filter_lines(blur),
+            # 玻璃载体自带半透明底色，卡内文本不需要增强阴影；而几百个带阴影的
+            # 文本 run 叠在 backdrop-filter 上会让滚动时无法复用绘制结果。
+            # 这里复位后由子元素继承 none，卡片外的裸标题仍然保留阴影。
+            "  text-shadow: none !important;",
             "}",
             "",
             # 内层内容区和操作区：只保留半透明表面，禁止再叠加模糊层
@@ -1314,6 +1415,67 @@ def _stats_highlight_css(stats_card_blur: int) -> str:
             f"  border-color: {primary_ring} !important;",
             "  position: relative;",
             "  overflow: hidden;",
+            "}",
+            "",
+            # 模型提供商页单独接管：这一页的 .provider-sources-panel、
+            # .provider-config-shell、.provider-section 都只是布局容器，
+            # 上方规则给它们各铺了一层 0.42 的玻璃，叠在工作台上会变成
+            # 1-(0.58^3)≈0.80 的实心板（侧栏条目再叠 0.54 可达 0.85），
+            # 外加 4 层嵌套 backdrop-filter 重复模糊。这里只让工作台当
+            # 唯一玻璃载体，内层收回透明，条目留一层浅色便于区分。
+            # 具体深浅见 _stats_highlight_css 顶部的 PROVIDER_* 常量。
+            "html.astrbot-palette-active #app .v-main .provider-page .provider-workbench {",
+            f"  background: {provider_shell} !important;",
+            f"  background-color: {provider_shell} !important;",
+            f"  border-color: {border} !important;",
+            f"  box-shadow: {shadow} !important;",
+            *_backdrop_filter_lines(blur),
+            "}",
+            "",
+            # 新增供应商抽屉原来只剩 _page_specific_surface_css 给的 0 透明度，
+            # 整块是透的，弹出来时底下的页面文字直接穿过卡片，很糊。这里让它和
+            # 工作台吃同一档玻璃；抽屉本身有 scrim 压暗背景，叠两层不会发实。
+            # 它是 v-card，必须带 :not 链（特异度 1-9-1）才压得住 _surface_css
+            # 里 .v-main .v-card:not(...) 的复位规则（1-8-1）。
+            f"html.astrbot-palette-active #app .v-main .provider-page .provider-drawer-card{NOT_COLORED} {{",
+            f"  background: {provider_shell} !important;",
+            f"  background-color: {provider_shell} !important;",
+            f"  border: 1px solid {border} !important;",
+            f"  box-shadow: {shadow} !important;",
+            *_backdrop_filter_lines(blur),
+            "}",
+            "",
+            "html.astrbot-palette-active #app .v-main .provider-page .provider-sources-panel,",
+            "html.astrbot-palette-active #app .v-main .provider-page .provider-workbench__sidebar,",
+            "html.astrbot-palette-active #app .v-main .provider-page .provider-workbench__main,",
+            "html.astrbot-palette-active #app .v-main .provider-page .provider-config-shell,",
+            "html.astrbot-palette-active #app .v-main .provider-page .provider-config-body,",
+            "html.astrbot-palette-active #app .v-main .provider-page .provider-config-header,",
+            "html.astrbot-palette-active #app .v-main .provider-page .provider-section,",
+            "html.astrbot-palette-active #app .v-main .provider-page .provider-section-content,",
+            "html.astrbot-palette-active #app .v-main .provider-page .provider-models-panel,",
+            "html.astrbot-palette-active #app .v-main .provider-page .provider-models-sections,",
+            # 未选中供应商时的空状态与大模型对话面板：原生没有底色，是插件额外
+            # 铺的 0.42 让右半边比左侧列表深一档，收回透明后与列表同底。
+            "html.astrbot-palette-active #app .v-main .provider-page .provider-empty-state,",
+            "html.astrbot-palette-active #app .v-main .provider-page .provider-chat-panel,",
+            # 新增供应商抽屉的外壳 nav 与头/内容只是布局，底色由卡片承担。
+            "html.astrbot-palette-active #app .v-main .provider-page .provider-drawer-overlay,",
+            "html.astrbot-palette-active #app .v-main .provider-page .provider-drawer-header,",
+            "html.astrbot-palette-active #app .v-main .provider-page .provider-drawer-content {",
+            "  background: transparent !important;",
+            "  background-color: transparent !important;",
+            "  box-shadow: none !important;",
+            "  backdrop-filter: none !important;",
+            "  -webkit-backdrop-filter: none !important;",
+            "}",
+            "",
+            "html.astrbot-palette-active #app .v-main .provider-page .provider-source-item {",
+            f"  background: {provider_row} !important;",
+            f"  background-color: {provider_row} !important;",
+            "  box-shadow: none !important;",
+            "  backdrop-filter: none !important;",
+            "  -webkit-backdrop-filter: none !important;",
             "}",
             "",
             # 供应商列表的悬停/选中底色：上方普通项玻璃规则（surface_strong 组）

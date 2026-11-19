@@ -889,6 +889,7 @@ def _build_bootstrap_script(
       if (style.textContent !== css) {{
         style.textContent = css;
       }}
+      notifyPluginPageFrames();
     }}
 
     function ensureThemeColorStyle(primary, secondary) {{
@@ -909,7 +910,76 @@ def _build_bootstrap_script(
       restoredThemeStyleActive = false;
       restoredThemePrimary = "";
       restoredThemeSecondary = "";
+      notifyPluginPageFrames();
     }}
+
+    // 插件页面是 sandbox iframe，读不到父文档的 CSS 变量；这里把当前主/辅色
+    // 用 postMessage 递过去，调色盘适配过的页面拿它替换自己的强调色。
+    function pluginPageFrames() {{
+      return Array.prototype.slice.call(
+        document.querySelectorAll("iframe.plugin-view-frame, iframe.plugin-page-frame")
+      );
+    }}
+
+    function pluginPageColor(rgb) {{
+      var parts = (rgb || "").trim().split(/[\\s,]+/);
+      if (parts.length !== 3) {{
+        return "";
+      }}
+      return "rgb(" + parts.join(", ") + ")";
+    }}
+
+    function pluginPageThemePayload() {{
+      var style;
+      try {{
+        style = window.getComputedStyle(document.documentElement);
+      }} catch (_) {{
+        return null;
+      }}
+      var primary = pluginPageColor(style.getPropertyValue("--v-theme-primary"));
+      var secondary = pluginPageColor(style.getPropertyValue("--v-theme-secondary"));
+      if (!primary && !secondary) {{
+        return null;
+      }}
+      return {{
+        type: "astrbot-palette:plugin-page-theme",
+        colors: {{ primary: primary, secondary: secondary }},
+      }};
+    }}
+
+    function notifyPluginPageFrames() {{
+      var payload = pluginPageThemePayload();
+      if (!payload) {{
+        return;
+      }}
+      pluginPageFrames().forEach(function (frame) {{
+        try {{
+          frame.contentWindow.postMessage(payload, "*");
+        }} catch (_) {{
+        }}
+      }});
+    }}
+
+    window.addEventListener("message", function (event) {{
+      var data = event && event.data;
+      if (!data || data.type !== "astrbot-palette:plugin-page-theme-request") {{
+        return;
+      }}
+      var fromFrame = pluginPageFrames().some(function (frame) {{
+        return frame.contentWindow === event.source;
+      }});
+      if (!fromFrame) {{
+        return;
+      }}
+      var payload = pluginPageThemePayload();
+      if (!payload) {{
+        return;
+      }}
+      try {{
+        event.source.postMessage(payload, "*");
+      }} catch (_) {{
+      }}
+    }});
 
     function revokeObjectUrls() {{
       cancelBackgroundWork();
@@ -1383,8 +1453,11 @@ def _build_bootstrap_script(
 
     function setInactive() {{
       document.documentElement.classList.remove(ACTIVE_CLASS);
+      document.documentElement.classList.remove("astrbot-palette-video-bg");
       document.documentElement.classList.remove(TOKEN_STATS_ACTIVE_CLASS);
       document.documentElement.removeAttribute("data-astrbot-palette-text-mode");
+      document.documentElement.removeAttribute("data-astrbot-palette-video-bg");
+      document.documentElement.classList.remove("astrbot-palette-video-bg");
       [
         "--astrbot-palette-background-image",
         "--astrbot-palette-background-fit",
@@ -1633,6 +1706,13 @@ def _build_bootstrap_script(
       root.style.setProperty("--astrbot-palette-background-contrast", String(clampNumber(config.background_contrast, 0.5, 1.5, 1)));
       root.style.setProperty("--astrbot-palette-background-saturation", String(clampNumber(config.background_saturation, 0, 2, 1)));
       root.setAttribute("data-astrbot-palette-text-mode", config.text_enhancement_mode || "soft_shadow");
+      // 视频壁纸每播一帧，页面上所有 backdrop-filter 元素都要重新采样并模糊
+      // 背景，这是持续的绘制开销；动态背景本身一直在变，模糊也看不出来。
+      // 切个类让样式的模糊规则整组让位，卡片仍保留半透明底色。
+      root.classList.toggle(
+        "astrbot-palette-video-bg",
+        currentMediaStatus === "video_ready"
+      );
       root.classList.toggle(
         ACTIVE_CLASS,
         Boolean(config.enabled && imageUrl)
